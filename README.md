@@ -1,6 +1,8 @@
 # copilot2api
 Copilot to OpenAI API
 
+ <a href="README_ZH.md">简体中文</a>
+ 
 ## Supported APIs
 
 - `GET /v1/models`: Get model list
