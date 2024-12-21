@@ -10,8 +10,11 @@ Copilot to OpenAI API
 ## How To Use
 1. Use Get-token to get your long term token.
 2. Save this token and use in client app
-3. Run the server <a href="https://github.com/patchescamerababy/copilot2api/">app</a>
+3. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a>
 
+## Usage
+
+    ./Copilot2API [port]
 
 ## Notice:
 1. The program will automatically save all received tokens to token.db
