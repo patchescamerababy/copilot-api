@@ -14,8 +14,9 @@ Copilot to OpenAI API
 3. 保存此token并在客户端应用中使用
 4. 运行 <a href="https://github.com/patchescamerababy/copilot2api/releases/">服务器</a>
 
-## 用法
+## 命令
 ./Copilot2API [端口号]
+
 ## 注意事项：
 1. 程序会自动将所有接收到的token保存到 *token.db*。下次如果客户端未提供token，将使用 token.db 中的随机令牌
 2. 当 `GET /v1/models` 未收到有效令牌作为授权请求头且 token.db 中没有token记录时，将返回默认的 JSON。
