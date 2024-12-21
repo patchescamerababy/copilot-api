@@ -179,9 +179,8 @@ public class GitHubOAuthDeviceFlow {
         String verificationUri = loginInfo.getString("verification_uri");
         String userCode = loginInfo.getString("user_code");
         String deviceCode = loginInfo.getString("device_code");
-
-//        System.out.printf("请在浏览器中打开 %s 并输入代码 %s 以登录.%n", verificationUri, userCode);
-        System.out.printf("Please open %s in your browser and enter code %s to log in.%n", verificationUri, userCode);
+        
+        System.out.printf("Please open\n\n%s\n\nin your browser and enter code %s to log in.%n", verificationUri, userCode);
 
         while (true) {
             Pair<LoginError, Object> pollResult = pollAuth(deviceCode);
