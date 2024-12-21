@@ -8,7 +8,7 @@ Copilot to OpenAI API
 - `POST /v1/embeddings`
 
 ## How To Use
-0. **recommend**: Register a new account
+0. **recommend**: <a href="https://github.com/signup">Sign up</a> a new account
 1. Run *Get-token*.
 2. Open the <a href="https://github.com/login/device">URL</a> in the browser and log in to authorize the program to obtain the token
 3. Save this token and use in client app
