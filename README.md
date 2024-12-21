@@ -8,9 +8,11 @@ Copilot to OpenAI API
 - `POST /v1/embeddings`
 
 ## How To Use
-1. Use Get-token to get your long term token.
-2. Save this token and use in client app
-3. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a>
+0. **recommend**: Register a new account
+1. Run *Get-token*.
+2. Open the <a href="https://github.com/login/device">URL</a> in the browser and log in to authorize the program to obtain the token
+3. Save this token and use in client app
+4. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a>
 
 ## Usage
 
@@ -21,6 +23,7 @@ Copilot to OpenAI API
 2. When `GET /v1/models` does not receive a valid token as an authorization request header, a default JSON is returned.
 3. Claude-3.5-sonnet may have network disconnection issues
 4. *Get-token* is written based on rust
+
 # Warning
 1. Please do not log in with a paid account. It is always **recommended** to log in with a **free account**. There is no guarantee that the account will not be banned.
 2. It is **not recommended** to run on any public network device
