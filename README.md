@@ -20,6 +20,7 @@ Copilot to OpenAI API
 1. The program will automatically save all received tokens to token.db
 2. When `GET /v1/models` does not receive a valid token as an authorization request header, a default JSON is returned.
 3. Claude-3.5-sonnet may have network disconnection issues
-
+4. *Get-token* is written based on rust
 # Warning
 1. Please do not log in with a paid account. It is always **recommended** to log in with a **free account**. There is no guarantee that the account will not be banned.
+2. It is **not recommended** to run on any public network device
