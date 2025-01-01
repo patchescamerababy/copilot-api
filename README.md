@@ -20,7 +20,19 @@ Copilot to OpenAI API
     docker pull patchescamera/copilot2api:latest
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
 
-
+#### Test
+    curl -X POST http://127.0.0.1/v1/chat/completions \
+     -H "Authorization: Bearer <Bearer>" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "gpt-4o-mini",
+           "messages": [
+               {"role": "user", "content": "Hello?"}
+           ],
+           "temperature": 0.7,
+           "max_tokens": 1024,
+           "stream": false
+         }'
 
 ## Notice:
 1. The program will automatically save all received tokens to *token.db*. And the next time if the client does not provide a token, a random token in token.db is used
