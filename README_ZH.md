@@ -14,8 +14,10 @@ Copilot to OpenAI API
 3. 保存此token并在客户端应用中使用
 4. 运行 <a href="https://github.com/patchescamerababy/copilot2api/releases/">服务器</a>
 
-## 命令
-./Copilot2API [端口号]
+## Docker部署
+
+    docker pull patchescamera/copilot2api:latest
+    docker run -d -p 8080:80 patchescamera/copilot2api:latest
 
 ## 注意事项：
 1. 程序会自动将保存token到 *token.db*。下次如果客户端未提供token，将使用 token.db 中的随机token
