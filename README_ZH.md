@@ -19,6 +19,20 @@ Copilot to OpenAI API
     docker pull patchescamera/copilot2api:latest
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
 
+#### 测试
+    curl -X POST http://127.0.0.1:8080/v1/chat/completions \
+     -H "Authorization: Bearer <Bearer>" \
+     -H "Content-Type: application/json" \
+     -d '{
+           "model": "gpt-4o",
+           "messages": [
+               {"role": "user", "content": "Hello?"}
+           ],
+           "temperature": 0.7,
+           "max_tokens": 1024,
+           "stream": false
+         }'
+         
 ## 注意事项：
 1. 程序会自动将保存token到 *token.db*。下次如果客户端未提供token，将使用 token.db 中的随机token
 2. 当 `GET /v1/models` 未收到有效令牌作为授权请求头且 token.db 中没有token记录时，将返回默认的 JSON。
