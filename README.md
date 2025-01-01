@@ -3,7 +3,7 @@ Copilot to OpenAI API
 
  <a href="README_ZH.md">简体中文</a>
  
-## Supported APIs
+## Supported AP
 
 - `GET /v1/models`: Get model list
 - `POST /v1/chat/completions`: Chat API
@@ -21,7 +21,7 @@ Copilot to OpenAI API
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
 
 #### Test
-    curl -X POST http://127.0.0.1/v1/chat/completions \
+    curl -X POST http://127.0.0.1:8080/v1/chat/completions \
      -H "Authorization: Bearer <Bearer>" \
      -H "Content-Type: application/json" \
      -d '{
