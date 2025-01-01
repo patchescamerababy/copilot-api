@@ -35,12 +35,12 @@ Copilot to OpenAI API
            "max_tokens": 1024,
            "stream": false
          }'
-## Build Rust based ***Get-Token*** on Linux:
+## Build Rust based ***Get-Token*** on Debian/Ubuntu:
     sudo apt update
     sudo apt install -y libssl-dev pkg-config cargo
     cargo build --release
 
-then
+Run
      
     ./target/release/Get-Token
      
