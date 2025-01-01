@@ -15,10 +15,12 @@ Copilot to OpenAI API
 2. Open the <a href="https://github.com/login/device">URL</a> in the browser and log in to authorize the program to obtain the token
 3. Save this token and use in client app
 4. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a>
+###  Docker
 
-## Usage
+    docker pull patchescamera/copilot2api:latest
+    docker run -d -p 8080:80 patchescamera/copilot2api:latest
 
-    ./Copilot2API [port]
+
 
 ## Notice:
 1. The program will automatically save all received tokens to *token.db*. And the next time if the client does not provide a token, a random token in token.db is used
