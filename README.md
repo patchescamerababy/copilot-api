@@ -15,6 +15,8 @@ Copilot to OpenAI API
 2. Open the <a href="https://github.com/login/device">URL</a> in the browser and log in to authorize the program to obtain the token
 3. Save this token and use in client app
 4. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a>
+
+## 
 ###  Docker
 
     docker pull patchescamera/copilot2api:latest
@@ -33,7 +35,15 @@ Copilot to OpenAI API
            "max_tokens": 1024,
            "stream": false
          }'
+## Build Rust based ***Get-Token*** on Linux:
+    sudo apt update
+    sudo apt install -y libssl-dev pkg-config cargo
+    cargo build --release
 
+then
+     
+    ./target/release/Get-Token
+     
 ## Notice:
 1. The program will automatically save all received tokens to *token.db*. And the next time if the client does not provide a token, a random token in token.db is used
 2. When `GET /v1/models` does not receive a valid token as an authorization request header and no record of token in token.db, a default JSON is returned.
