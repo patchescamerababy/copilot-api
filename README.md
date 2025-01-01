@@ -3,7 +3,7 @@ Copilot to OpenAI API
 
  <a href="README_ZH.md">简体中文</a>
  
-## Supported AP
+## Supported API
 
 - `GET /v1/models`: Get model list
 - `POST /v1/chat/completions`: Chat API
