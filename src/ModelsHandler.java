@@ -2,28 +2,22 @@ import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import org.json.JSONObject;
+import org.json.JSONArray;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.net.http.HttpClient;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/**
- * 处理获取模型列表请求的处理器，适配 GitHub Copilot API，仅处理 GET 请求。
- */
 public class ModelsHandler implements HttpHandler {
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
-    private final ExecutorService executor = Executors.newFixedThreadPool(10);
     private static final String COPILOT_MODELS_URL = "https://api.individual.githubcopilot.com/models";
-
-    // 初始化 TokenManager 和 Utils
-    private final TokenManager tokenManager = new TokenManager();
-//    private final Utils utils = new Utils();
+    private final ExecutorService executor = Executors.newFixedThreadPool(10);
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -48,21 +42,18 @@ public class ModelsHandler implements HttpHandler {
         }
 
         // 异步处理请求
-        CompletableFuture.runAsync(() -> {
+        executor.submit(() -> {
             try {
                 List<JSONObject> fetchedModels = ModelService.models;
                 // 读取请求头
                 Headers requestHeaders = exchange.getRequestHeaders();
                 String authorizationHeader = requestHeaders.getFirst("Authorization");
                 // 获取有效的短期令牌
-                String tempToken = utils.getToken(authorizationHeader,exchange);
+                String tempToken = utils.getToken(authorizationHeader, exchange);
 
-                if (tempToken != null || !tempToken.isEmpty()) {
+                if (tempToken != null && !tempToken.isEmpty()) {
                     fetchedModels = ModelService.fetchModels(tempToken);
                 }
-
-
-                // 使用临时令牌获取模型列表
 
                 if (fetchedModels == null) {
                     sendError(exchange, "无法获取模型列表。", 500);
@@ -71,7 +62,11 @@ public class ModelsHandler implements HttpHandler {
 
                 // 将模型列表转换为 JSON 对象
                 JSONObject responseJson = new JSONObject();
-                responseJson.put("data", fetchedModels);
+                JSONArray dataArray = new JSONArray();
+                for (JSONObject model : fetchedModels) {
+                    dataArray.put(model);
+                }
+                responseJson.put("data", dataArray);
                 responseJson.put("object", "list");
 
                 // 准备响应
@@ -86,7 +81,7 @@ public class ModelsHandler implements HttpHandler {
                 e.printStackTrace();
                 sendError(exchange, "内部服务器错误: " + e.getMessage(), 500);
             }
-        }, executor);
+        });
     }
 
     /**
