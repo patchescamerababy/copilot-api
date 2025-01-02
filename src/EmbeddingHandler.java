@@ -6,25 +6,19 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.*;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 public class EmbeddingHandler implements HttpHandler {
     public static final String COPILOT_CHAT_EMBEDDINGS_URL = "https://api.individual.githubcopilot.com/embeddings";
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(60))
-            .build();
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
 
     @Override
@@ -54,11 +48,16 @@ public class EmbeddingHandler implements HttpHandler {
         }
 
         // 异步处理请求
-        CompletableFuture.runAsync(() -> {
+        executor.submit(() -> {
             try {
                 Headers requestHeaders = exchange.getRequestHeaders();
                 String authorizationHeader = requestHeaders.getFirst("Authorization");
-                String receivedToken = utils.getToken(authorizationHeader,exchange);
+                String receivedToken = utils.getToken(authorizationHeader, exchange);
+                if (receivedToken == null || receivedToken.isEmpty()) {
+                    sendError(exchange, "Token is invalid.", 401);
+                    return;
+                }
+
                 // 读取请求体
                 String requestBody = readRequestBody(exchange.getRequestBody());
                 // 记录收到的JSON（格式化输出）
@@ -87,7 +86,7 @@ public class EmbeddingHandler implements HttpHandler {
                     ioException.printStackTrace();
                 }
             }
-        }, executor);
+        });
     }
 
     /**
@@ -183,7 +182,7 @@ public class EmbeddingHandler implements HttpHandler {
     /**
      * 处理嵌入请求
      */
-    private void handleEmbeddingRequest(HttpExchange exchange, EmbeddingParameters params, String receivedToken) throws IOException, InterruptedException {
+    private void handleEmbeddingRequest(HttpExchange exchange, EmbeddingParameters params, String receivedToken) throws IOException {
         // 请求头设置
         Map<String, String> headers = HeadersInfo.getCopilotHeaders();
         headers.put("Authorization", "Bearer " + receivedToken); // 更新 Token
@@ -191,20 +190,19 @@ public class EmbeddingHandler implements HttpHandler {
         // 构建请求体
         JSONObject jsonBody = constructEmbeddingRequestBody(params);
 
-        // 构建HttpRequest
-        HttpRequest request = buildHttpRequest(headers, jsonBody);
-
-        // 发送请求并获取响应
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        // 构建并发送HttpURLConnection
+        HttpURLConnection connection = createConnection(COPILOT_CHAT_EMBEDDINGS_URL, headers, jsonBody);
+        int responseCode = connection.getResponseCode();
 
         // 输出响应状态码和响应体（格式化输出）
-        System.out.println("GitHub Copilot Embedding API Response Status Code: " + response.statusCode());
+        System.out.println("GitHub Copilot Embedding API Response Status Code: " + responseCode);
+        String responseBody = readStream(connection.getInputStream());
         System.out.println("GitHub Copilot Embedding API Response Body:");
-        System.out.println(formatJson(response.body()));
+        System.out.println(formatJson(responseBody));
 
-        if (response.statusCode() == 200) {
+        if (responseCode == HttpURLConnection.HTTP_OK) {
             // 返回响应体
-            String copilotResponse = response.body();
+            String copilotResponse = responseBody;
             System.out.println("Received Embedding Response from Copilot API:");
             System.out.println(formatJson(copilotResponse));
 
@@ -218,8 +216,9 @@ public class EmbeddingHandler implements HttpHandler {
         } else {
             // 处理非200响应
             System.err.println("Error: Received non-200 response from GitHub Copilot Embedding API.");
-            // 发送错误响应
-            sendErrorResponse(exchange, response.statusCode(), "Failed to get embeddings from Copilot API");
+            // 读取错误流
+            String errorResponse = readStream(connection.getErrorStream());
+            sendErrorResponse(exchange, responseCode, "Failed to get embeddings from Copilot API: " + errorResponse);
         }
     }
 
@@ -245,21 +244,43 @@ public class EmbeddingHandler implements HttpHandler {
     }
 
     /**
-     * 构建HttpRequest
+     * 创建并配置 HttpURLConnection
      */
-    private HttpRequest buildHttpRequest(Map<String, String> headers, JSONObject jsonBody) {
-        HttpRequest.Builder requestBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(EmbeddingHandler.COPILOT_CHAT_EMBEDDINGS_URL))
-                .header("Content-Type", HeadersInfo.content_type)
-                .timeout(Duration.ofMinutes(2))
-                .POST(HttpRequest.BodyPublishers.ofString(jsonBody.toString()));
+    private HttpURLConnection createConnection(String urlString, Map<String, String> headers, JSONObject jsonBody) throws IOException {
+        URL url = new URL(urlString);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("POST");
+        connection.setConnectTimeout(120000); // 120秒
+        connection.setReadTimeout(120000); // 120秒
+        connection.setDoOutput(true);
 
-        // 添加所有自定义头（除去受限头部）
+        // 设置请求头
         for (Map.Entry<String, String> entry : headers.entrySet()) {
-            requestBuilder.header(entry.getKey(), entry.getValue());
+            connection.setRequestProperty(entry.getKey(), entry.getValue());
         }
 
-        return requestBuilder.build();
+        // 写入请求体
+        try (OutputStream os = connection.getOutputStream()) {
+            byte[] input = jsonBody.toString().getBytes(StandardCharsets.UTF_8);
+            os.write(input, 0, input.length);
+        }
+
+        return connection;
+    }
+
+    /**
+     * 读取输入流内容为字符串
+     */
+    private String readStream(InputStream is) throws IOException {
+        if (is == null) return "";
+        BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ( (line = reader.readLine()) != null ) {
+            sb.append(line).append("\n");
+        }
+        reader.close();
+        return sb.toString();
     }
 
     /**
@@ -276,6 +297,7 @@ public class EmbeddingHandler implements HttpHandler {
             this.user = user;
         }
     }
+
     /**
      * 发送错误响应
      */
