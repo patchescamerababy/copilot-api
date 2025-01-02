@@ -1,12 +1,10 @@
 import com.sun.net.httpserver.HttpExchange;
 import org.json.JSONObject;
 
-import java.io.IOException;
-import java.io.OutputStream;
+import java.io.*;
+import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -17,41 +15,29 @@ import java.util.concurrent.locks.ReentrantLock;
 public class utils {
     private static final ReentrantLock tokenLock = new ReentrantLock();
     private static final TokenManager tokenManager = new TokenManager();
+
     public static String GetToken(String longTermToken) {
-
-        // 创建 HttpClient 实例
-        HttpClient client = HttpClient.newHttpClient();
-
-        // 构建请求 URL
-        String url = "https://api.github.com/copilot_internal/v2/token";
-
-        // 创建 HttpRequest 并设置方法、URI 和头部
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .header("Authorization", "token " + longTermToken)
-                .header("Editor-Plugin-Version", HeadersInfo.editor_plugin_version)
-                .header("Editor-Version", HeadersInfo.editor_version)
-                .header("User-Agent", HeadersInfo.user_agent)
-                .header("x-github-api-version", HeadersInfo.x_github_api_version)
-                .header("Sec-Fetch-Site", "none")
-                .header("Sec-Fetch-Mode", "no-cors")
-                .header("Sec-Fetch-Dest", "empty")
-                .build();
-
-        // 发送请求并处理响应
         try {
-            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+            URL url = new URL("https://api.github.com/copilot_internal/v2/token");
+            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(60000); // 60秒
+            connection.setReadTimeout(60000); // 60秒
+            connection.setRequestProperty("Authorization", "token " + longTermToken);
+            connection.setRequestProperty("Editor-Plugin-Version", HeadersInfo.editor_plugin_version);
+            connection.setRequestProperty("Editor-Version", HeadersInfo.editor_version);
+            connection.setRequestProperty("User-Agent", HeadersInfo.user_agent);
+            connection.setRequestProperty("x-github-api-version", HeadersInfo.x_github_api_version);
+            connection.setRequestProperty("Sec-Fetch-Site", "none");
+            connection.setRequestProperty("Sec-Fetch-Mode", "no-cors");
+            connection.setRequestProperty("Sec-Fetch-Dest", "empty");
 
-            // 检查状态码是否在200到299之间
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                // 获取响应体
-                String responseBody = response.body();
+            int responseCode = connection.getResponseCode();
 
-                // 解析 JSON 使用 org.json
+            if (responseCode >= 200 && responseCode < 300) {
+                String responseBody = readStream(connection.getInputStream());
                 JSONObject jsonObject = new JSONObject(responseBody);
 
-                // 提取 "token" 字段
                 if (jsonObject.has("token")) {
                     String token = jsonObject.getString("token");
                     System.out.println("\n新Token:\n " + token);
@@ -60,18 +46,17 @@ public class utils {
                     System.out.println("\"token\" 字段未找到在响应中。");
                 }
             } else {
-                System.out.println(longTermToken);
-                System.out.println("请求失败，状态码: " + response.statusCode());
-                System.out.println("响应体: " + response.body());
+                String errorResponse = readStream(connection.getErrorStream());
+                System.out.println("请求失败，状态码: " + responseCode);
+                System.out.println("响应体: " + errorResponse);
             }
             return null;
         } catch (Exception e) {
             e.printStackTrace();
             return null;
         }
-
-
     }
+
     /**
      * 获取有效的短期令牌。如果不存在或已过期，则生成新的短期令牌并更新数据库。
      *
@@ -86,7 +71,6 @@ public class utils {
             // 重新检查，防止多线程环境下的竞争
             String tempToken = tokenManager.getTempToken(longTermToken);
 
-
             if (isTokenExpired(tempToken)) {
                 System.out.println("Token已过期");
                 // 生成新的短期令牌
@@ -100,8 +84,7 @@ public class utils {
                     throw new IOException("无法更新临时令牌。");
                 }
                 return newTempToken;
-            }
-            else{
+            } else {
                 return tempToken;
             }
 
@@ -128,10 +111,8 @@ public class utils {
         }
     }
 
-
     public static int extractTimestamp(String input) {
         // 使用split方法以";"分割字符串
-//        System.out.println(input);
         String[] splitArray = input.split(";");
 
         // 遍历分割后的数组
@@ -176,7 +157,19 @@ public class utils {
         System.out.println("还剩: " + minutes + "分钟" + seconds + "秒");
         return exp < currentEpoch;
     }
-    public static String getToken(String authorizationHeader,HttpExchange exchange){
+
+    // 从 Authorization: Bearer <token> 中取出 token
+    public static String getToken(String authorizationHeader) {
+        if (authorizationHeader == null) {
+            return null;
+        }
+        if (authorizationHeader.toLowerCase().startsWith("bearer ")) {
+            return authorizationHeader.substring(7).trim();
+        }
+        return null;
+    }
+
+    public static String getToken(String authorizationHeader, HttpExchange exchange) {
         final TokenManager tokenManager = new TokenManager(); // 确保 TokenManager 实例
         String longTermToken;
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
@@ -202,7 +195,7 @@ public class utils {
                 // 如果不存在，添加它
                 String newTempToken = utils.GetToken(longTermToken); // 生成新的临时令牌
                 if (newTempToken == null || newTempToken.isEmpty()) {
-
+                    sendError(exchange, "无法生成新的临时令牌。", 500);
                     return null;
                 }
                 long tempTokenExpiry = utils.extractTimestamp(newTempToken); // 假设临时令牌的过期时间可以通过此方法获取
@@ -228,5 +221,20 @@ public class utils {
             return null;
         }
         return tempToken;
+    }
+
+    /**
+     * 读取输入流内容为字符串
+     */
+    private static String readStream(InputStream is) throws IOException {
+        if (is == null) return "";
+        BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ( (line = reader.readLine()) != null ) {
+            sb.append(line).append("\n");
+        }
+        reader.close();
+        return sb.toString();
     }
 }
