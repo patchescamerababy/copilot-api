@@ -1,6 +1,5 @@
-use reqwest::{Client, Proxy};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::env;
 use std::error::Error;
 use std::io::{self, Write};
 use std::time::Duration;
@@ -13,7 +12,6 @@ const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 
 #[derive(Debug)]
 enum LoginError {
-    AuthPending,
     ExpiredToken,
     NetworkError,
     OtherError(String),
@@ -24,24 +22,19 @@ struct DeviceCodeResponse {
     device_code: String,
     user_code: String,
     verification_uri: String,
-    expires_in: u64,
     interval: u64,
 }
 
 #[derive(Debug, Deserialize)]
 struct AccessTokenResponse {
     access_token: Option<String>,
-    token_type: Option<String>,
-    scope: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-
     dotenv::dotenv().ok();
-
 
     let client = configure_client().await?;
 
@@ -57,15 +50,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 自动打开默认浏览器并指向验证URI
     if let Err(e) = open_browser_with_code(&device_code_resp) {
-        eprintln!("无法打开浏览器: {}", e);
-        eprintln!(
-            "请手动在浏览器中打开 {} 并输入代码 {} 以登录。",
-            device_code_resp.verification_uri, device_code_resp.user_code
-        );
+        eprintln!("无法打开浏览器");
     }
 
     println!(
-        "如果浏览器未自动打开，请在浏览器中访问 {} 并输入代码 {} 以登录。",
+        "如果浏览器未打开，请在浏览器中访问 {} 并输入 {} 以登录。",
         device_code_resp.verification_uri, device_code_resp.user_code
     );
 
@@ -85,18 +74,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// 配置HTTP客户端，自动检测系统代理
 async fn configure_client() -> Result<Client, Box<dyn Error>> {
     let client_builder = Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent("Rust OAuth Device Flow");
 
-    // `reqwest` 默认会自动检测系统代理设置，无需手动配置
     let client = client_builder.build()?;
     Ok(client)
 }
 
-/// 获取设备代码信息
 async fn get_device_code(client: &Client) -> Result<DeviceCodeResponse, Box<dyn Error>> {
     #[derive(Serialize)]
     struct DeviceCodeRequest<'a> {
@@ -131,7 +117,6 @@ async fn get_device_code(client: &Client) -> Result<DeviceCodeResponse, Box<dyn 
     }
 }
 
-/// 轮询获取访问令牌
 async fn poll_access_token(
     client: &Client,
     device_code_resp: &DeviceCodeResponse,
@@ -214,7 +199,6 @@ async fn poll_access_token(
     }
 }
 
-/// 自动打开默认浏览器并指向验证URI
 fn open_browser_with_code(device_code_resp: &DeviceCodeResponse) -> Result<(), Box<dyn Error>> {
     let url = format!(
         "{}?user_code={}",
@@ -224,7 +208,6 @@ fn open_browser_with_code(device_code_resp: &DeviceCodeResponse) -> Result<(), B
     Ok(())
 }
 
-/// 提示用户按下Enter后退出
 fn prompt_exit() {
     print!("按下 Enter 键以退出...");
     io::stdout().flush().unwrap();
