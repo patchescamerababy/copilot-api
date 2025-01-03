@@ -98,27 +98,7 @@ public class ModelService {
                     .put("version", "gpt-4-0613")
                     .put("object", "model"));
 
-            // GPT 4 Turbo
-            models.add(new JSONObject()
-                    .put("preview", false)
-                    .put("capabilities", new JSONObject()
-                            .put("supports", new JSONObject()
-                                    .put("parallel_tool_calls", true)
-                                    .put("tool_calls", true))
-                            .put("family", "gpt-4-turbo")
-                            .put("type", "chat")
-                            .put("limits", new JSONObject()
-                                    .put("max_context_window_tokens", 128000)
-                                    .put("max_prompt_tokens", 64000)
-                                    .put("max_output_tokens", 4096))
-                            .put("object", "model_capabilities")
-                            .put("tokenizer", "cl100k_base"))
-                    .put("vendor", "Azure OpenAI")
-                    .put("model_picker_enabled", false)
-                    .put("name", "GPT 4 Turbo")
-                    .put("id", "gpt-4-0125-preview")
-                    .put("version", "gpt-4-0125-preview")
-                    .put("object", "model"));
+
 
             // GPT 4o
             models.add(new JSONObject()
@@ -320,43 +300,6 @@ public class ModelService {
                     .put("name", "GPT 4 Turbo")
                     .put("id", "gpt-4-0125-preview")
                     .put("version", "gpt-4-0125-preview")
-                    .put("object", "model"));
-
-            // o1 Preview
-            models.add(new JSONObject()
-                    .put("preview", true)
-                    .put("capabilities", new JSONObject()
-                            .put("supports", new JSONObject())
-                            .put("family", "o1")
-                            .put("type", "chat")
-                            .put("limits", new JSONObject()
-                                    .put("max_context_window_tokens", 128000)
-                                    .put("max_prompt_tokens", 20000))
-                            .put("object", "model_capabilities")
-                            .put("tokenizer", "o200k_base"))
-                    .put("vendor", "Azure OpenAI")
-                    .put("model_picker_enabled", true)
-                    .put("name", "o1-preview (Preview)")
-                    .put("id", "o1-preview")
-                    .put("version", "o1-preview-2024-09-12")
-                    .put("object", "model"));
-
-            models.add(new JSONObject()
-                    .put("preview", true)
-                    .put("capabilities", new JSONObject()
-                            .put("supports", new JSONObject())
-                            .put("family", "o1")
-                            .put("type", "chat")
-                            .put("limits", new JSONObject()
-                                    .put("max_context_window_tokens", 128000)
-                                    .put("max_prompt_tokens", 20000))
-                            .put("object", "model_capabilities")
-                            .put("tokenizer", "o200k_base"))
-                    .put("vendor", "Azure OpenAI")
-                    .put("model_picker_enabled", false)
-                    .put("name", "o1-preview (Preview)")
-                    .put("id", "o1-preview-2024-09-12")
-                    .put("version", "o1-preview-2024-09-12")
                     .put("object", "model"));
 
             // o1 Mini Preview
