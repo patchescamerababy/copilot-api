@@ -40,3 +40,38 @@ Copilot to OpenAI API
 5. o1系列模型不支持stream流式，如果stream为true本程序只是模拟
 6. 请勿使用付费账户登录。**推荐**使用**免费账号**登录。无法保证账户不会被封禁。
 7. **不推荐**在公网络设备上运行
+
+
+# 模型列表:
+
+### 格式:
+ 
+#### id -> 默认版本(也可直接用此作为id)
+
+## Chat
+gpt-4o -> gpt-4o-2015-05-13
+
+gpt-4-o-preview -> gpt-4o-2015-05-13
+
+gpt-4o-2024-08-06 -> gpt-4o-2024-08-06
+
+gpt-4 -> gpt-4-0613
+
+gpt-4-0613 -> gpt-4-0613
+
+gpt-4o-mini -> gpt-4o-mini-2024-07-18
+
+gpt-4-0125-preview
+
+gpt-3.5-turbo -> gpt-3.5-turbo-0613
+
+o1 -> o1-2024-12-17
+
+o1-mini
+
+claude-3.5-sonnet
+## Embeddings
+
+text-embedding-ada-002
+
+text-embedding-3-small-inference -> text-embedding-3-small
