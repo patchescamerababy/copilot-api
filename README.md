@@ -60,9 +60,9 @@ Run
 #### id -> default version(also could use that id)
 
 ## Chat
-gpt-4o -> gpt-4o-2015-05-13
+gpt-4o -> gpt-4o-2024-05-13
 
-gpt-4-o-preview -> gpt-4o-2015-05-13
+gpt-4-o-preview -> gpt-4o-2024-05-13
 
 gpt-4o-2024-08-06 -> gpt-4o-2024-08-06
 
