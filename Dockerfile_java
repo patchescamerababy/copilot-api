@@ -1,0 +1,13 @@
+FROM openjdk:8-jre-alpine
+
+WORKDIR /app
+
+COPY Copilot.jar .
+
+EXPOSE 80
+
+ENTRYPOINT ["java", "-jar", "Copilot.jar"]
+
+# ENV JAVA_OPTS="-Xms256m -Xmx1024m"
+
+# ENTRYPOINT ["java", "-jar", "Copilot.jar"]
