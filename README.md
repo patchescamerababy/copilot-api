@@ -7,16 +7,14 @@ Copilot to OpenAI API
 
 - `GET /v1/models`: Get model list
 - `POST /v1/chat/completions`: Chat API
-- `POST /v1/embeddings`
+- `POST /v1/embeddings`: Text Embedding
 
 ## How To Use
-0. **RECOMMEND**: <a href="https://github.com/signup">Sign up</a> a new account
-1. Run *Get-token*.
-2. Open the <a href="https://github.com/login/device">URL</a> in the browser and log in to authorize the program to obtain the token
-3. Save this token and use in client app
-4. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a>
+0. ⚠**RECOMMEND**: <a href="https://github.com/signup">Sign up</a> a new account
+1. Run *<a href="https://github.com/patchescamerababy/copilot2api/releases">Get-token</a>* and open this <a href="https://github.com/login/device">URL</a> to get long term token.
+2. Save this token and use in client app
+3. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a> or Docker
 
-## 
 ###  Docker
 
     docker pull patchescamera/copilot2api:latest
@@ -35,6 +33,7 @@ Copilot to OpenAI API
            "max_tokens": 1024,
            "stream": false
          }'
+         
 ## Build Rust based ***Get-Token*** on Debian/Ubuntu:
     sudo apt update
     sudo apt install -y libssl-dev pkg-config cargo
@@ -45,10 +44,10 @@ Run
     ./target/release/Get-Token
      
 ## Notice:
-1. The program will automatically save all received tokens to *token.db*. And the next time if the client does not provide a token, a random token in token.db is used
-2. When `GET /v1/models` does not receive a valid token as an authorization request header and no record of token in token.db, a default JSON is returned.
-3. Model *Claude-3.5-sonnet* using stream mode may have issues with responses being truncated. Switching to non-stream mode might alleviate this.
-
-# Warning
-1. Please do not log in with a paid account. It is always **recommended** to log in with a **free account**. There is no guarantee that the account will not be banned.
-2. It is **not recommended** to run on any public network device
+1. The program will automatically save the token to SQlite's token.db. Next time, if the client does not provide a token, a random token in tokens.db will be used.
+2. Image input/generation is not supported.
+3. All tokens passed in will be recorded in tokens.db. Do not pass in invalid tokens.
+4. When `GET /v1/models` does not receive a valid Bearer request header, a random bearer in tokens.db will be used. If there is no record in tokens.db, the default JSON will be returned.
+5. The o1 series models do not support streaming. If *stream* is true, this program only simulates
+6. ⚠Please do not log in with a paid account. It is always **recommended** to log in with a **free account**. There is no guarantee that the account will not be banned.
+7. It is **not recommended** to run on public network 
