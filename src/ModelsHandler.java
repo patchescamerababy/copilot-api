@@ -48,17 +48,14 @@ public class ModelsHandler implements HttpHandler {
                 // 读取请求头
                 Headers requestHeaders = exchange.getRequestHeaders();
                 String authorizationHeader = requestHeaders.getFirst("Authorization");
-                // 获取有效的短期令牌
-                String tempToken = utils.getToken(authorizationHeader, exchange);
-
-                if (tempToken != null && !tempToken.isEmpty()) {
-                    fetchedModels = ModelService.fetchModels(tempToken);
+                if(authorizationHeader != null){
+                    // 获取有效的短期令牌
+                    String tempToken = utils.getToken(authorizationHeader, exchange);
+                    if (tempToken != null) {
+                        fetchedModels = ModelService.fetchModels(tempToken);
+                    }
                 }
-
-                if (fetchedModels == null) {
-                    sendError(exchange, "无法获取模型列表。", 500);
-                    return;
-                }
+                
 
                 // 将模型列表转换为 JSON 对象
                 JSONObject responseJson = new JSONObject();
