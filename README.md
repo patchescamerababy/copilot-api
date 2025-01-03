@@ -52,3 +52,37 @@ Run
 5. The o1 series models do not support streaming. If *stream* is true, this program only simulates
 6. ⚠Please do not log in with a paid account. It is always **recommended** to log in with a **free account**. There is no guarantee that the account will not be banned.
 7. It is **not recommended** to run on public network 
+
+# Model list:
+
+### format:
+ 
+#### id -> default version(also could use that id)
+
+## Chat
+gpt-4o -> gpt-4o-2015-05-13
+
+gpt-4-o-preview -> gpt-4o-2015-05-13
+
+gpt-4o-2024-08-06 -> gpt-4o-2024-08-06
+
+gpt-4 -> gpt-4-0613
+
+gpt-4-0613 -> gpt-4-0613
+
+gpt-4o-mini -> gpt-4o-mini-2024-07-18
+
+gpt-4-0125-preview
+
+gpt-3.5-turbo -> gpt-3.5-turbo-0613
+
+o1 -> o1-2024-12-17
+
+o1-mini
+
+claude-3.5-sonnet
+## Embeddings
+
+text-embedding-ada-002
+
+text-embedding-3-small-inference -> text-embedding-3-small
