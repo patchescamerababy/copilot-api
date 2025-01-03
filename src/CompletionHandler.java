@@ -16,6 +16,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
+/**
+ * 处理聊天补全请求的处理器，适配 GitHub Copilot API，仅处理文本生成请求。
+ */
 public class CompletionHandler implements HttpHandler {
     private static final String COPILOT_CHAT_COMPLETIONS_URL = "https://api.individual.githubcopilot.com/chat/completions";
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
@@ -169,13 +172,13 @@ public class CompletionHandler implements HttpHandler {
                     }
                 }
             }
-
-            // 构建 OpenAI API 风格的响应 JSON
+            
             JSONObject openAIResponse = new JSONObject();
             openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID().toString());
             openAIResponse.put("object", "chat.completion");
             openAIResponse.put("created", Instant.now().getEpochSecond());
-            openAIResponse.put("model", responseJson.optString("model", "gpt-4o"));
+            openAIResponse.put("model", responseJson.optString("model", responseJson.optString("model")));
+            openAIResponse.put("system_fingerprint", openAIResponse.optString("system_fingerprint", "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
 
             JSONArray choicesArray = new JSONArray();
             JSONObject choiceObject = new JSONObject();
