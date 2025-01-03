@@ -13,10 +13,15 @@ Copilot to OpenAI API
 2. 保存此token并在客户端应用中使用
 3. 运行 <a href="https://github.com/patchescamerababy/copilot2api/releases/">服务端程序</a> 或Docker部署
 
-## Docker部署
+## Docker 
 
-    docker pull patchescamera/copilot2api:latest
+    docker pull patchescamera/copilot2api:latest # AOT 编译二进制版本
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
+    
+#### 或JRE8版本
+
+    docker pull patchescamera/copilot2api:java
+    docker run -d -p 8080:80 patchescamera/copilot2api:java
 
 #### 测试
     curl -X POST http://127.0.0.1:8080/v1/chat/completions \
