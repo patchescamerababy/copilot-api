@@ -7,7 +7,6 @@ import org.json.JSONObject;
 
 import java.io.*;
 import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -17,9 +16,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
-/**
- * 处理聊天补全请求的处理器，适配 GitHub Copilot API，仅处理文本生成请求。
- */
 public class CompletionHandler implements HttpHandler {
     private static final String COPILOT_CHAT_COMPLETIONS_URL = "https://api.individual.githubcopilot.com/chat/completions";
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
@@ -151,7 +147,7 @@ public class CompletionHandler implements HttpHandler {
 
     private void handleO1StreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson, String model) {
         try {
-            HttpURLConnection connection = createConnection(COPILOT_CHAT_COMPLETIONS_URL, headers, requestJson);
+            HttpURLConnection connection = createConnection(headers, requestJson);
             int responseCode = connection.getResponseCode();
 
             if (responseCode != HttpURLConnection.HTTP_OK) {
@@ -179,7 +175,7 @@ public class CompletionHandler implements HttpHandler {
             openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID().toString());
             openAIResponse.put("object", "chat.completion");
             openAIResponse.put("created", Instant.now().getEpochSecond());
-            openAIResponse.put("model", responseJson.optString("model", "gpt-4o-mini-2024-07-18"));
+            openAIResponse.put("model", responseJson.optString("model", "gpt-4o"));
 
             JSONArray choicesArray = new JSONArray();
             JSONObject choiceObject = new JSONObject();
@@ -213,7 +209,7 @@ public class CompletionHandler implements HttpHandler {
      * 处理流式响应
      */
     private void handleStreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) throws IOException {
-        HttpURLConnection connection = createConnection(COPILOT_CHAT_COMPLETIONS_URL, headers, requestJson);
+        HttpURLConnection connection = createConnection(headers, requestJson);
         int responseCode = connection.getResponseCode();
 
         if (responseCode != HttpURLConnection.HTTP_OK) {
@@ -268,20 +264,11 @@ public class CompletionHandler implements HttpHandler {
                                         newSseJson.put("choices", newChoices);
 
                                         // 添加其他字段
-                                        if (sseJson.has("created")) {
-                                            newSseJson.put("created", sseJson.getLong("created"));
-                                        } else {
-                                            newSseJson.put("created", Instant.now().getEpochSecond());
-                                        }
 
-                                        if (sseJson.has("id")) {
-                                            newSseJson.put("id", sseJson.getString("id"));
-                                        } else {
-                                            newSseJson.put("id", UUID.randomUUID().toString());
-                                        }
-
-                                        newSseJson.put("model", sseJson.optString("model", "gpt-3.5-turbo"));
-                                        newSseJson.put("system_fingerprint", "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12));
+                                        newSseJson.put("created", sseJson.optLong("created", Instant.now().getEpochSecond()));
+                                        newSseJson.put("id", sseJson.optString("id", UUID.randomUUID().toString()));
+                                        newSseJson.put("model", sseJson.optString("model", requestJson.optString("model")));
+                                        newSseJson.put("system_fingerprint", sseJson.optString("system_fingerprint", "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
 
                                         // 构建新的 SSE 行
                                         String newSseLine = "data: " + newSseJson + "\n\n";
@@ -307,7 +294,7 @@ public class CompletionHandler implements HttpHandler {
      */
     private void handleNormalResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson, String model) {
         try {
-            HttpURLConnection connection = createConnection(COPILOT_CHAT_COMPLETIONS_URL, headers, requestJson);
+            HttpURLConnection connection = createConnection(headers, requestJson);
             int responseCode = connection.getResponseCode();
 
             if (responseCode != HttpURLConnection.HTTP_OK) {
@@ -317,46 +304,10 @@ public class CompletionHandler implements HttpHandler {
             }
 
             String responseBody = readStream(connection.getInputStream());
-            JSONObject responseJson = new JSONObject(responseBody);
-            JSONArray choices = responseJson.optJSONArray("choices");
-            String assistantContent = "";
-            if (choices != null && choices.length() > 0) {
-                JSONObject firstChoice = choices.getJSONObject(0);
-                if (firstChoice.has("message")) {
-                    JSONObject message = firstChoice.getJSONObject("message");
-                    if (!message.isNull("content")) {
-                        assistantContent = message.optString("content", "");
-                    }
-                }
-            }
-
-            // 构建 OpenAI API 风格的响应 JSON
-            JSONObject openAIResponse = new JSONObject();
-            openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID().toString());
-            openAIResponse.put("object", "chat.completion");
-            openAIResponse.put("created", Instant.now().getEpochSecond());
-            openAIResponse.put("model", model);
-
-            JSONArray choicesArray = new JSONArray();
-            JSONObject choiceObject = new JSONObject();
-            choiceObject.put("index", 0);
-
-            JSONObject messageObject = new JSONObject();
-            messageObject.put("role", "assistant");
-            messageObject.put("content", assistantContent);
-            System.out.println("Received: \n" + assistantContent);
-
-            choiceObject.put("message", messageObject);
-            choiceObject.put("finish_reason", "stop");
-            choicesArray.put(choiceObject);
-
-            openAIResponse.put("choices", choicesArray);
-
             exchange.getResponseHeaders().add("Content-Type", "application/json");
-            String responseStr = openAIResponse.toString();
-            exchange.sendResponseHeaders(200, responseStr.getBytes(StandardCharsets.UTF_8).length);
+            exchange.sendResponseHeaders(200, responseBody.getBytes(StandardCharsets.UTF_8).length);
             try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseStr.getBytes(StandardCharsets.UTF_8));
+                os.write(responseBody.getBytes(StandardCharsets.UTF_8));
             }
 
         } catch (Exception e) {
@@ -368,8 +319,8 @@ public class CompletionHandler implements HttpHandler {
     /**
      * 创建并配置 HttpURLConnection
      */
-    private HttpURLConnection createConnection(String urlString, Map<String, String> headers, JSONObject jsonBody) throws IOException {
-        URL url = new URL(urlString);
+    private HttpURLConnection createConnection(Map<String, String> headers, JSONObject jsonBody) throws IOException {
+        URL url = new URL(CompletionHandler.COPILOT_CHAT_COMPLETIONS_URL);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(60000); // 60秒
@@ -398,7 +349,7 @@ public class CompletionHandler implements HttpHandler {
         BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
         StringBuilder sb = new StringBuilder();
         String line;
-        while ( (line = reader.readLine()) != null ) {
+        while ((line = reader.readLine()) != null) {
             sb.append(line).append("\n");
         }
         reader.close();
