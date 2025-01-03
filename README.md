@@ -16,10 +16,15 @@ Copilot to OpenAI API
 3. Save this token and use in client app
 4. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a> or Docker
 
-###  Docker
+## Docker 
 
-    docker pull patchescamera/copilot2api:latest
+    docker pull patchescamera/copilot2api:latest # AOT compilation based on Graalvm
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
+    
+#### OR JRE8 version
+
+    docker pull patchescamera/copilot2api:java
+    docker run -d -p 8080:80 patchescamera/copilot2api:java
 
 #### Test
     curl -X POST http://127.0.0.1:8080/v1/chat/completions \
