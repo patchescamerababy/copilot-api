@@ -12,8 +12,9 @@ Copilot to OpenAI API
 ## How To Use
 0. ⚠**RECOMMEND**: <a href="https://github.com/signup">Sign up</a> a new free account and ⚠**DO NOT** use paid account
 1. Run *<a href="https://github.com/patchescamerababy/copilot2api/releases">Get-token</a>* and open this <a href="https://github.com/login/device">URL</a> to get long term token.
-2. Save this token and use in client app
-3. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a> or Docker
+2. Open <a href="https://github.com/copilot">this</a> to enable copilot
+3. Save this token and use in client app
+4. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a> or Docker
 
 ###  Docker
 
