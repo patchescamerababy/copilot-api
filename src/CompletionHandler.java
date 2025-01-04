@@ -1,6 +1,8 @@
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -16,31 +18,35 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
+/**
+ * Handler for chat completion requests, adapting the GitHub Copilot API, only handling text generation requests.
+ */
 public class CompletionHandler implements HttpHandler {
     private static final String COPILOT_CHAT_COMPLETIONS_URL = "https://api.individual.githubcopilot.com/chat/completions";
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    private static final Logger logger = LogManager.getLogger(CompletionHandler.class);
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
-        // 设置 CORS 头
+        // Set CORS headers
         Headers responseHeaders = exchange.getResponseHeaders();
-        responseHeaders.add("Access-Control-Allow-Origin", "*");
-        responseHeaders.add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-        responseHeaders.add("Access-Control-Allow-Headers", "Content-Type, Authorization");
-
+        responseHeaders.set("Access-Control-Allow-Origin", "*");
+        responseHeaders.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        responseHeaders.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+        responseHeaders.set("Connection", "keep-alive");
         String requestMethod = exchange.getRequestMethod().toUpperCase();
 
         if (requestMethod.equals("OPTIONS")) {
-            // 处理预检请求
+            // Handle preflight requests
             exchange.sendResponseHeaders(204, -1);
             return;
         }
 
         if ("GET".equals(requestMethod)) {
-            // 返回欢迎页面
-            String response = "<html><head><title>欢迎使用API</title></head><body><h1>欢迎使用API</h1><p>此 API 用于与 GitHub Copilot 模型交互。您可以发送消息给模型并接收响应。</p></body></html>";
+            // Return welcome page
+            String response = "<html><head><title>Welcome to API</title></head><body><h1>Welcome to API</h1><p>This API is used to interact with the GitHub Copilot model. You can send messages to the model and receive responses.</p></body></html>";
 
-            exchange.getResponseHeaders().add("Content-Type", "text/html");
+            exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");
             exchange.sendResponseHeaders(200, response.getBytes(StandardCharsets.UTF_8).length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(response.getBytes(StandardCharsets.UTF_8));
@@ -49,31 +55,35 @@ public class CompletionHandler implements HttpHandler {
         }
 
         if (!"POST".equals(requestMethod)) {
-            // 不支持的方法
+            // Method not supported
             exchange.sendResponseHeaders(405, -1);
             return;
         }
 
-        // 异步处理请求
+        // Asynchronously handle the request
         executor.submit(() -> {
             try {
-                // 读取请求头
+                // Read request headers
                 Headers requestHeaders = exchange.getRequestHeaders();
                 String authorizationHeader = requestHeaders.getFirst("Authorization");
+                if(!authorizationHeader.startsWith("Bearer ")) {
+                    sendError(exchange, "Token is invalid.", 401);
+                    return;
+                }
                 String receivedToken = utils.getToken(authorizationHeader, exchange);
                 if (receivedToken == null || receivedToken.isEmpty()) {
                     sendError(exchange, "Token is invalid.", 401);
                     return;
                 }
-                // 读取请求体
+                // Read request body
                 InputStream is = exchange.getRequestBody();
                 String requestBody = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))
                         .lines()
                         .collect(Collectors.joining("\n"));
 
                 JSONObject requestJson = new JSONObject(requestBody);
-
-                // 提取参数
+                System.out.println(requestJson.toString(4));
+                // Extract parameters
                 String model = requestJson.optString("model", "gpt-4o");
                 double temperature = requestJson.optDouble("temperature", 0.6);
                 double topP = requestJson.optDouble("top_p", 0.9);
@@ -82,31 +92,11 @@ public class CompletionHandler implements HttpHandler {
 
                 JSONArray messages = requestJson.optJSONArray("messages");
                 if (messages == null || messages.isEmpty()) {
-                    sendError(exchange, "消息内容为空。", 400);
+                    sendError(exchange, "Message content is empty.", 400);
                     return;
                 }
 
-                // 限制历史对话（最多100条）
-                JSONArray limitedMessages = new JSONArray();
-                int start = Math.max(0, messages.length() - 100);
-                for (int i = start; i < messages.length(); i++) {
-                    limitedMessages.put(messages.getJSONObject(i));
-                }
-
-                // 提取用户消息内容（假设最后一条是用户消息）
-                String userContent = "";
-                JSONObject lastMessage = limitedMessages.getJSONObject(limitedMessages.length() - 1);
-                String role = lastMessage.optString("role", "");
-                if (role.equals("user")) {
-                    userContent = lastMessage.optString("content", "");
-                }
-
-                if (userContent.isEmpty()) {
-                    sendError(exchange, "用户消息内容为空。", 400);
-                    return;
-                }
-
-                // 构建新的请求 JSON，适配 Copilot API
+                // Build a new request JSON, adapting to the Copilot API
                 JSONObject newRequestJson = new JSONObject();
                 newRequestJson.put("model", model);
                 boolean isO1 = false;
@@ -120,39 +110,39 @@ public class CompletionHandler implements HttpHandler {
                 newRequestJson.put("temperature", temperature);
                 newRequestJson.put("top_p", topP);
 
-                newRequestJson.put("messages", limitedMessages);
+                newRequestJson.put("messages", messages);
 
-                // 构建 Copilot API 请求头
+                // Build Copilot API request headers
                 Map<String, String> copilotHeaders = HeadersInfo.getCopilotHeaders();
                 copilotHeaders.put("openai-intent", "conversation-panel");
-                copilotHeaders.put("Authorization", "Bearer " + receivedToken); // 更新 Token
+                copilotHeaders.put("Authorization", "Bearer " + receivedToken); // Update Token
 
-                // 根据是否为流式响应，调用不同的处理方法
+                // Depending on whether it is a stream response, call different handling methods
                 if (isStream) {
                     if (!isO1) {
                         handleStreamResponse(exchange, copilotHeaders, newRequestJson);
                     } else {
-                        handleO1StreamResponse(exchange, copilotHeaders, newRequestJson, model);
+                        handleO1StreamResponse(exchange, copilotHeaders, newRequestJson);
                     }
                 } else {
-                    handleNormalResponse(exchange, copilotHeaders, newRequestJson, model);
+                    handleNormalResponse(exchange, copilotHeaders, newRequestJson);
                 }
 
             } catch (Exception e) {
-                e.printStackTrace();
-                sendError(exchange, "内部服务器错误: " + e.getMessage(), 500);
+                logger.error(e.getMessage());
+                sendError(exchange, "Internal server error: " + e.getMessage(), 500);
             }
         });
     }
 
-    private void handleO1StreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson, String model) {
+    private void handleO1StreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) {
         try {
             HttpURLConnection connection = createConnection(headers, requestJson);
             int responseCode = connection.getResponseCode();
 
             if (responseCode != HttpURLConnection.HTTP_OK) {
                 String errorResponse = readStream(connection.getErrorStream());
-                sendError(exchange, "API 错误: " + responseCode + " - " + errorResponse, responseCode);
+                sendError(exchange, "API Error: " + responseCode + " - " + errorResponse, responseCode);
                 return;
             }
 
@@ -160,7 +150,7 @@ public class CompletionHandler implements HttpHandler {
             JSONObject responseJson = new JSONObject(responseBody);
             JSONArray choices = responseJson.optJSONArray("choices");
             String assistantContent = "";
-            if (choices != null && choices.length() > 0) {
+            if (choices != null && !choices.isEmpty()) {
                 JSONObject firstChoice = choices.getJSONObject(0);
                 if (firstChoice.has("message")) {
                     JSONObject message = firstChoice.getJSONObject("message");
@@ -169,14 +159,179 @@ public class CompletionHandler implements HttpHandler {
                     }
                 }
             }
-            
+
+            // Build OpenAI API style response JSON
             JSONObject openAIResponse = new JSONObject();
-            openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID().toString());
+            openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID());
             openAIResponse.put("object", "chat.completion");
             openAIResponse.put("created", Instant.now().getEpochSecond());
-            openAIResponse.put("model", responseJson.optString("model", responseJson.optString("model")));
+            openAIResponse.put("model", responseJson.optString("model", responseJson.optString("model", "o1")));
             openAIResponse.put("system_fingerprint", openAIResponse.optString("system_fingerprint", "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
 
+            JSONArray choicesArray = new JSONArray();
+            JSONObject choiceObject = new JSONObject();
+            choiceObject.put("index", 0);
+
+            JSONObject messageObject = new JSONObject();
+            messageObject.put("role", "assistant");
+            messageObject.put("content", assistantContent);
+            System.out.println("Received: \n" + assistantContent);
+            choiceObject.put("message", messageObject);
+            choiceObject.put("finish_reason", "stop");
+            choicesArray.put(choiceObject);
+
+            openAIResponse.put("choices", choicesArray);
+
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            byte[] responseBytes = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, responseBytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(responseBytes);
+            }
+
+        } catch (Exception e) {
+            logger.error(e.getMessage());
+            sendError(exchange, "Error occurred while processing response: " + e.getMessage(), 500);
+        }
+    }
+
+    /**
+     * Handle stream response
+     */
+    private void handleStreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) throws IOException {
+        HttpURLConnection connection = createConnection(headers, requestJson);
+        int responseCode = connection.getResponseCode();
+
+        if (responseCode != HttpURLConnection.HTTP_OK) {
+            String errorResponse = readStream(connection.getErrorStream());
+            sendError(exchange, "API Error: " + responseCode + " - " + errorResponse, responseCode);
+            return;
+        }
+
+        exchange.getResponseHeaders().add("Content-Type", "text/event-stream; charset=utf-8");
+        exchange.getResponseHeaders().add("Cache-Control", "no-cache");
+        exchange.getResponseHeaders().add("Connection", "keep-alive");
+        exchange.sendResponseHeaders(200, 0);
+
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8));
+             OutputStream os = exchange.getResponseBody()) {
+
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+
+                if (line.startsWith("data: ")) {
+                    String data = line.substring(6).trim();
+                    if (data.equals("[DONE]")) {
+                        os.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                        os.flush();
+                        break;
+                    }
+
+                    try {
+                        JSONObject sseJson = new JSONObject(data);
+
+                        // Check if it contains 'choices' array
+                        if (sseJson.has("choices")) {
+                            JSONArray choices = sseJson.getJSONArray("choices");
+                            for (int i = 0; i < choices.length(); i++) {
+                                JSONObject choice = choices.getJSONObject(i);
+                                JSONObject delta = choice.optJSONObject("delta");
+                                if (delta != null && delta.has("content")) {
+                                    String content = delta.optString("content", "");
+
+                                    // Only process if content is not empty
+                                    if (!content.isEmpty()) {
+                                        // Build new SSE JSON
+                                        JSONObject newSseJson = new JSONObject();
+                                        JSONArray newChoices = new JSONArray();
+                                        JSONObject newChoice = new JSONObject();
+                                        newChoice.put("index", choice.optInt("index", i));
+
+                                        JSONObject newDelta = new JSONObject();
+                                        newDelta.put("content", content);
+                                        System.out.print(content);
+                                        newChoice.put("delta", newDelta);
+
+                                        newChoices.put(newChoice);
+                                        newSseJson.put("choices", newChoices);
+
+                                        // Add other fields
+                                        newSseJson.put("created", sseJson.optLong("created", Instant.now().getEpochSecond()));
+                                        newSseJson.put("id", sseJson.optString("id", UUID.randomUUID().toString()));
+                                        newSseJson.put("model", sseJson.optString("model", requestJson.optString("model")));
+                                        newSseJson.put("system_fingerprint", sseJson.optString("system_fingerprint", "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
+
+                                        // Build new SSE line
+                                        String newSseLine = "data: " + newSseJson + "\n\n";
+
+                                        os.write(newSseLine.getBytes(StandardCharsets.UTF_8));
+                                        os.flush();
+                                    }
+                                }
+                            }
+                        }
+                    } catch (JSONException e) {
+                        System.err.println("JSON parsing error: " + e.getMessage());
+                    }
+                }
+            }
+        } catch (IOException e) {
+            logger.error(e.getMessage());
+            sendError(exchange, "Failed to send response: " + e.getMessage(), 502);
+        }
+    }
+
+    /**
+     * Handle non-stream response
+     */
+    private void handleNormalResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) {
+        try {
+            HttpURLConnection connection = createConnection(headers, requestJson);
+            int responseCode = connection.getResponseCode();
+
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                String errorResponse = readStream(connection.getErrorStream());
+                sendError(exchange, "API Error: " + responseCode + " - " + errorResponse, responseCode);
+                return;
+            }
+
+            String responseBody = readStream(connection.getInputStream());
+            JSONObject responseJson = new JSONObject(responseBody);
+            JSONArray choices = responseJson.optJSONArray("choices");
+            String assistantContent = "";
+            if (choices != null && !choices.isEmpty()) {
+                JSONObject firstChoice = choices.getJSONObject(0);
+                if (firstChoice.has("message")) {
+                    JSONObject message = firstChoice.getJSONObject("message");
+                    if (!message.isNull("content")) {
+                        assistantContent = message.optString("content", "");
+                    }
+                }
+            }
+
+            // Build OpenAI API style response JSON
+            JSONObject openAIResponse = new JSONObject();
+            if (responseJson.has("id")) {
+                openAIResponse.put("id", responseJson.getString("id"));
+            } else {
+                openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID());
+            }
+            if (responseJson.has("object")) {
+                openAIResponse.put("object", responseJson.getString("object"));
+            } else {
+                openAIResponse.put("object", "chat.completion");
+            }
+            if (responseJson.has("created")) {
+                openAIResponse.put("created", responseJson.getLong("created"));
+            } else {
+                openAIResponse.put("created", Instant.now().getEpochSecond());
+            }
+            if (responseJson.has("model")) {
+                openAIResponse.put("model", responseJson.getString("model"));
+            } else {
+                openAIResponse.put("model", responseJson.optString("model", "gpt-4o"));
+            }
             JSONArray choicesArray = new JSONArray();
             JSONObject choiceObject = new JSONObject();
             choiceObject.put("index", 0);
@@ -193,146 +348,35 @@ public class CompletionHandler implements HttpHandler {
             openAIResponse.put("choices", choicesArray);
 
             exchange.getResponseHeaders().add("Content-Type", "application/json");
-            String responseStr = openAIResponse.toString();
-            exchange.sendResponseHeaders(200, responseStr.getBytes(StandardCharsets.UTF_8).length);
+            byte[] responseBytes = responseBody.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(200, responseBytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseStr.getBytes(StandardCharsets.UTF_8));
+                os.write(responseBytes);
             }
 
         } catch (Exception e) {
-            e.printStackTrace();
-            sendError(exchange, "处理响应时发生错误: " + e.getMessage(), 500);
+            logger.error(e.getMessage());
+            sendError(exchange, "Error occurred while processing response: " + e.getMessage(), 500);
         }
     }
 
     /**
-     * 处理流式响应
-     */
-    private void handleStreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) throws IOException {
-        HttpURLConnection connection = createConnection(headers, requestJson);
-        int responseCode = connection.getResponseCode();
-
-        if (responseCode != HttpURLConnection.HTTP_OK) {
-            String errorResponse = readStream(connection.getErrorStream());
-            sendError(exchange, "API 错误: " + responseCode + " - " + errorResponse, responseCode);
-            return;
-        }
-
-        exchange.getResponseHeaders().add("Content-Type", "text/event-stream; charset=utf-8");
-        exchange.getResponseHeaders().add("Cache-Control", "no-cache");
-        exchange.getResponseHeaders().add("Connection", "keep-alive");
-        exchange.sendResponseHeaders(200, 0);
-
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8));
-             OutputStream os = exchange.getResponseBody()) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.startsWith("data: ")) {
-                    String data = line.substring(6).trim();
-                    if (data.equals("[DONE]")) {
-                        os.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                        os.flush();
-                        break;
-                    }
-
-                    try {
-                        JSONObject sseJson = new JSONObject(data);
-
-                        // 检查是否包含 'choices' 数组
-                        if (sseJson.has("choices")) {
-                            JSONArray choices = sseJson.getJSONArray("choices");
-                            for (int i = 0; i < choices.length(); i++) {
-                                JSONObject choice = choices.getJSONObject(i);
-                                JSONObject delta = choice.optJSONObject("delta");
-                                if (delta != null && delta.has("content")) {
-                                    String content = delta.optString("content", "");
-
-                                    // 仅在content不为空时处理
-                                    if (!content.isEmpty()) {
-                                        // 构建新的 SSE JSON
-                                        JSONObject newSseJson = new JSONObject();
-                                        JSONArray newChoices = new JSONArray();
-                                        JSONObject newChoice = new JSONObject();
-                                        newChoice.put("index", choice.optInt("index", i));
-
-                                        JSONObject newDelta = new JSONObject();
-                                        newDelta.put("content", content);
-                                        System.out.print(content);
-                                        newChoice.put("delta", newDelta);
-
-                                        newChoices.put(newChoice);
-                                        newSseJson.put("choices", newChoices);
-
-                                        // 添加其他字段
-
-                                        newSseJson.put("created", sseJson.optLong("created", Instant.now().getEpochSecond()));
-                                        newSseJson.put("id", sseJson.optString("id", UUID.randomUUID().toString()));
-                                        newSseJson.put("model", sseJson.optString("model", requestJson.optString("model")));
-                                        newSseJson.put("system_fingerprint", sseJson.optString("system_fingerprint", "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
-
-                                        // 构建新的 SSE 行
-                                        String newSseLine = "data: " + newSseJson + "\n\n";
-                                        os.write(newSseLine.getBytes(StandardCharsets.UTF_8));
-                                        os.flush();
-                                    }
-                                }
-                            }
-                        }
-                    } catch (JSONException e) {
-                        System.err.println("JSON解析错误: " + e.getMessage());
-                    }
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-            sendError(exchange, "响应发送失败: " + e.getMessage(), 502);
-        }
-    }
-
-    /**
-     * 处理非流式响应
-     */
-    private void handleNormalResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson, String model) {
-        try {
-            HttpURLConnection connection = createConnection(headers, requestJson);
-            int responseCode = connection.getResponseCode();
-
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                String errorResponse = readStream(connection.getErrorStream());
-                sendError(exchange, "API 错误: " + responseCode + " - " + errorResponse, responseCode);
-                return;
-            }
-
-            String responseBody = readStream(connection.getInputStream());
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, responseBody.getBytes(StandardCharsets.UTF_8).length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseBody.getBytes(StandardCharsets.UTF_8));
-            }
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            sendError(exchange, "处理响应时发生错误: " + e.getMessage(), 500);
-        }
-    }
-
-    /**
-     * 创建并配置 HttpURLConnection
+     * Create and configure HttpURLConnection
      */
     private HttpURLConnection createConnection(Map<String, String> headers, JSONObject jsonBody) throws IOException {
         URL url = new URL(CompletionHandler.COPILOT_CHAT_COMPLETIONS_URL);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("POST");
-        connection.setConnectTimeout(60000); // 60秒
-        connection.setReadTimeout(60000); // 60秒
+        connection.setConnectTimeout(60000); // 60 seconds
+        connection.setReadTimeout(60000); // 60 seconds
         connection.setDoOutput(true);
 
-        // 设置请求头
+        // Set request headers
         for (Map.Entry<String, String> entry : headers.entrySet()) {
             connection.setRequestProperty(entry.getKey(), entry.getValue());
         }
 
-        // 写入请求体
+        // Write request body
         try (OutputStream os = connection.getOutputStream()) {
             byte[] input = jsonBody.toString().getBytes(StandardCharsets.UTF_8);
             os.write(input, 0, input.length);
@@ -342,7 +386,7 @@ public class CompletionHandler implements HttpHandler {
     }
 
     /**
-     * 读取输入流内容为字符串
+     * Read input stream content as a string
      */
     private String readStream(InputStream is) throws IOException {
         if (is == null) return "";
@@ -357,7 +401,7 @@ public class CompletionHandler implements HttpHandler {
     }
 
     /**
-     * 发送错误响应
+     * Send error response
      */
     public static void sendError(HttpExchange exchange, String message, int HTTP_code) {
         try {
@@ -370,7 +414,7 @@ public class CompletionHandler implements HttpHandler {
                 os.write(bytes);
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error(e.getMessage());
         }
     }
 }
