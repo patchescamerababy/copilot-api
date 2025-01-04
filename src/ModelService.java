@@ -408,14 +408,13 @@ public class ModelService {
     }
 
     /**
-     * 从 GitHub Copilot API 获取模型列表
+     * Get a list of models from the GitHub Copilot API
      *
-     * @return 模型列表
-     * @throws Exception 如果发生任何错误
+     * @return a list of models
+     * @throws Exception if any errors occur
      */
     public static List<JSONObject> fetchModels(String token) throws Exception {
         List<JSONObject> fetchedModels = new ArrayList<>();
-        // 构建请求到 GitHub Copilot API
         URL url = new URL("https://api.individual.githubcopilot.com/models");
 
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -434,7 +433,7 @@ public class ModelService {
         connection.setRequestProperty("accept-encoding", "gzip, deflate, br zstd");
         connection.setRequestProperty("Connection", "close");
 
-        // 读取响应
+        // Read the response
         int responseCode = connection.getResponseCode();
         if (responseCode == 200) {
             BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8));
@@ -445,7 +444,7 @@ public class ModelService {
             }
             in.close();
 
-            // 解析 JSON 响应
+            // Parse the JSON response
             JSONObject jsonResponse = new JSONObject(response.toString());
             JSONArray jsonArray = jsonResponse.getJSONArray("data");
             for (int i = 0; i < jsonArray.length(); i++) {
