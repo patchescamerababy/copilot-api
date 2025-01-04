@@ -1,9 +1,10 @@
 import com.sun.net.httpserver.HttpExchange;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.json.JSONObject;
 
 import java.io.*;
 import java.net.HttpURLConnection;
-import java.net.URI;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -15,14 +16,15 @@ import java.util.concurrent.locks.ReentrantLock;
 public class utils {
     private static final ReentrantLock tokenLock = new ReentrantLock();
     private static final TokenManager tokenManager = new TokenManager();
+    private static final Logger logger = LogManager.getLogger(utils.class);
 
     public static String GetToken(String longTermToken) {
         try {
             URL url = new URL("https://api.github.com/copilot_internal/v2/token");
             HttpURLConnection connection = (HttpURLConnection) url.openConnection();
             connection.setRequestMethod("GET");
-            connection.setConnectTimeout(60000); // 60秒
-            connection.setReadTimeout(60000); // 60秒
+            connection.setConnectTimeout(60000); // 60 seconds
+            connection.setReadTimeout(60000); // 60 seconds
             connection.setRequestProperty("Authorization", "token " + longTermToken);
             connection.setRequestProperty("Editor-Plugin-Version", HeadersInfo.editor_plugin_version);
             connection.setRequestProperty("Editor-Version", HeadersInfo.editor_version);
@@ -37,51 +39,51 @@ public class utils {
             if (responseCode >= 200 && responseCode < 300) {
                 String responseBody = readStream(connection.getInputStream());
                 JSONObject jsonObject = new JSONObject(responseBody);
-
+                System.out.println(responseBody);
                 if (jsonObject.has("token")) {
                     String token = jsonObject.getString("token");
-                    System.out.println("\n新Token:\n " + token);
+                    System.out.println("\nNew Token:\n " + token);
                     return token;
                 } else {
-                    System.out.println("\"token\" 字段未找到在响应中。");
+                    System.out.println("\"token\" field not found in the response.");
                 }
             } else {
                 String errorResponse = readStream(connection.getErrorStream());
-                System.out.println("请求失败，状态码: " + responseCode);
-                System.out.println("响应体: " + errorResponse);
+                System.out.println("Request failed, status code: " + responseCode);
+                System.out.println("Response body: " + errorResponse);
             }
             return null;
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Failed to get token: {}", e.getMessage());
             return null;
         }
     }
 
     /**
-     * 获取有效的短期令牌。如果不存在或已过期，则生成新的短期令牌并更新数据库。
+     * Get a valid short-term token. If it does not exist or has expired, generate a new short-term token and update the database.
      *
-     * @param longTermToken 长期令牌
-     * @return 有效的短期令牌
-     * @throws IOException 如果在获取或更新令牌时发生错误
+     * @param longTermToken Long-term token
+     * @return Valid short-term token
+     * @throws IOException If an error occurs while fetching or updating the token
      */
     public static String getValidTempToken(String longTermToken) throws IOException {
-        // 如果令牌不存在或已过期，获取锁以防止多线程竞争
+        // If the token does not exist or has expired, acquire the lock to prevent multi-threaded competition
         tokenLock.lock();
         try {
-            // 重新检查，防止多线程环境下的竞争
+            // Recheck to prevent competition in a multi-threaded environment
             String tempToken = tokenManager.getTempToken(longTermToken);
 
             if (isTokenExpired(tempToken)) {
-                System.out.println("Token已过期");
-                // 生成新的短期令牌
+                System.out.println("Token has expired");
+                // Generate a new short-term token
                 String newTempToken = utils.GetToken(longTermToken);
                 if (newTempToken == null || newTempToken.isEmpty()) {
-                    throw new IOException("无法生成新的临时令牌。");
+                    throw new IOException("Unable to generate a new temporary token.");
                 }
-                long newExpiry = extractTimestamp(newTempToken);
+                int newExpiry = extractTimestamp(newTempToken);
                 boolean updated = tokenManager.updateTempToken(longTermToken, newTempToken, newExpiry);
                 if (!updated) {
-                    throw new IOException("无法更新临时令牌。");
+                    throw new IOException("Unable to update temporary token.");
                 }
                 return newTempToken;
             } else {
@@ -94,7 +96,7 @@ public class utils {
     }
 
     /**
-     * 发送错误响应
+     * Send error response
      */
     public static void sendError(HttpExchange exchange, String message, int HTTP_code) {
         try {
@@ -107,124 +109,117 @@ public class utils {
                 os.write(bytes);
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            logger.error("Failed to send error response: {}", e.getMessage());
         }
     }
 
     public static int extractTimestamp(String input) {
-        // 使用split方法以";"分割字符串
+        // Use split method to split the string with ";"
         String[] splitArray = input.split(";");
 
-        // 遍历分割后的数组
+        // Traverse the split array
         for (String part : splitArray) {
-            // 如果找到包含 "exp=" 的部分
+            // If the part containing "exp=" is found
             if (part.startsWith("exp=")) {
                 return Integer.parseInt(part.substring(4));
             }
         }
-        // 如果没有找到，返回一个默认值，比如0
+        // If not found, return a default value, such as 0
         return 0;
     }
 
     /**
-     * 检查 Token 是否过期
+     * Check if the token has expired
      *
-     * @param token Token 字符串，格式如 "tid=b91081296b85fc09f76d3c4ac8f0a6a6;exp=1731950502"
-     * @return 如果过期则返回 true，未过期返回 false
+     * @param token Token string, format like "tid=b91081296b85fc09f76d3c4ac8f0a6a6;exp=1731950502"
+     * @return Returns true if expired, false if not expired
      */
     public static boolean isTokenExpired(String token) {
         int exp = extractTimestamp(token);
-        long currentEpoch = Instant.now().getEpochSecond();
-        // 格式化时间戳为 2024年xx月xx日xx时xx分xx秒
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy年MM月dd日HH点mm分ss秒");
 
-        // 格式化过期时间
+        int currentEpoch = (int) Instant.now().getEpochSecond();
+        // Format timestamp as "yyyy/MM/dd HH:mm:ss"
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
+
+        // Format expiration time
         LocalDateTime expirationTime = LocalDateTime.ofInstant(Instant.ofEpochSecond(exp), ZoneId.systemDefault());
         String formattedExpiration = expirationTime.format(formatter);
 
-        // 格式化当前时间
+        // Format current time
         LocalDateTime currentTime = LocalDateTime.ofInstant(Instant.ofEpochSecond(currentEpoch), ZoneId.systemDefault());
         String formattedCurrent = currentTime.format(formatter);
 
-        // 计算剩余时间（分钟和秒）
-        long remainingSeconds = exp - currentEpoch;
-        long minutes = remainingSeconds / 60;
-        long seconds = remainingSeconds % 60;
+        // Calculate remaining time (minutes and seconds)
+        int remainingSeconds = exp - currentEpoch;
+        int minutes = remainingSeconds / 60;
+        int seconds = remainingSeconds % 60;
 
-        // 打印结果
-        System.out.println("当前时间: " + formattedCurrent);
-        System.out.println("过期时间: " + formattedExpiration);
-        System.out.println("还剩: " + minutes + "分钟" + seconds + "秒");
+        // Print results
+        System.out.println("Current epoch: " + currentEpoch);
+        System.out.println("Expiration epoch: " + exp);
+        System.out.println("  Current  time: " + formattedCurrent);
+        System.out.println("Expiration time: " + formattedExpiration);
+        System.out.println("Remaining: " + minutes + " minutes " + seconds + " seconds");
         return exp < currentEpoch;
     }
 
-    // 从 Authorization: Bearer <token> 中取出 token
-    public static String getToken(String authorizationHeader) {
-        if (authorizationHeader == null) {
-            return null;
-        }
-        if (authorizationHeader.toLowerCase().startsWith("bearer ")) {
-            return authorizationHeader.substring(7).trim();
-        }
-        return null;
-    }
-
     public static String getToken(String authorizationHeader, HttpExchange exchange) {
-        final TokenManager tokenManager = new TokenManager(); // 确保 TokenManager 实例
+
         String longTermToken;
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
-            // 使用随机长期令牌
+
+            // Use random long-term token
             longTermToken = tokenManager.getRandomLongTermToken();
-            System.out.println("使用随机长期令牌: " + longTermToken);
+            System.out.println("Using random long-term token: " + longTermToken);
         } else {
-            // 提取长期令牌
+            // Extract long-term token
             longTermToken = authorizationHeader.substring("Bearer ".length()).trim();
             if (longTermToken.isEmpty()) {
                 sendError(exchange, "Token is empty.", 401);
                 return null;
             }
 
-            // 检查令牌前缀是否为 "ghu" 或 "gho"
+            // Check if the token prefix is "ghu" or "gho"
             if (!(longTermToken.startsWith("ghu") || longTermToken.startsWith("gho"))) {
                 utils.sendError(exchange, "Invalid token prefix.", 401);
                 return null;
             }
 
-            // 检查长期令牌是否存在于数据库
+            // Check if the long-term token exists in the database
             if (!tokenManager.isLongTermTokenExists(longTermToken)) {
-                // 如果不存在，添加它
-                String newTempToken = utils.GetToken(longTermToken); // 生成新的临时令牌
+                // If not, add it
+                String newTempToken = utils.GetToken(longTermToken); // Generate new temporary token
                 if (newTempToken == null || newTempToken.isEmpty()) {
-                    sendError(exchange, "无法生成新的临时令牌。", 500);
+                    sendError(exchange, "Unable to generate a new temporary token.", 500);
                     return null;
                 }
-                long tempTokenExpiry = utils.extractTimestamp(newTempToken); // 假设临时令牌的过期时间可以通过此方法获取
+                int tempTokenExpiry = utils.extractTimestamp(newTempToken); // Assume the temporary token's expiration time can be obtained through this method
                 boolean added = tokenManager.addLongTermToken(longTermToken, newTempToken, tempTokenExpiry);
                 if (!added) {
-                    sendError(exchange, "无法添加长期令牌。", 500);
+                    sendError(exchange, "Unable to add long-term token.", 500);
                     return null;
                 }
             }
         }
 
-        // 获取有效的短期令牌
+        // Get valid short-term token
         String tempToken;
         try {
             tempToken = utils.getValidTempToken(longTermToken);
         } catch (IOException e) {
-            sendError(exchange, "令牌处理失败: " + e.getMessage(), 500);
+            sendError(exchange, "Token processing failed: " + e.getMessage(), 500);
             return null;
         }
 
         if (tempToken == null || tempToken.isEmpty()) {
-            sendError(exchange, "无法获取有效的临时令牌。", 500);
+            sendError(exchange, "Unable to obtain a valid temporary token.", 500);
             return null;
         }
         return tempToken;
     }
 
     /**
-     * 读取输入流内容为字符串
+     * Read input stream content as a string
      */
     private static String readStream(InputStream is) throws IOException {
         if (is == null) return "";
