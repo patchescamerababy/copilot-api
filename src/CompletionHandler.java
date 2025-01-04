@@ -82,50 +82,35 @@ public class CompletionHandler implements HttpHandler {
                         .collect(Collectors.joining("\n"));
 
                 JSONObject requestJson = new JSONObject(requestBody);
-                System.out.println(requestJson.toString(4));
+
                 // Extract parameters
-                String model = requestJson.optString("model", "gpt-4o");
-                double temperature = requestJson.optDouble("temperature", 0.6);
-                double topP = requestJson.optDouble("top_p", 0.9);
-                int maxTokens = requestJson.optInt("max_tokens", 4096);
+                String model = requestJson.optString("model", requestJson.getString("model"));
                 boolean isStream = requestJson.optBoolean("stream", false);
 
-                JSONArray messages = requestJson.optJSONArray("messages");
-                if (messages == null || messages.isEmpty()) {
-                    sendError(exchange, "Message content is empty.", 400);
-                    return;
-                }
-
                 // Build a new request JSON, adapting to the Copilot API
-                JSONObject newRequestJson = new JSONObject();
-                newRequestJson.put("model", model);
                 boolean isO1 = false;
                 if (model.startsWith("o1")) {
-                    newRequestJson.put("stream", false);
+                    System.out.println("stream: false");
                     isO1 = true;
                 } else {
-                    newRequestJson.put("stream", isStream);
+                    requestJson.put("stream", isStream);
                 }
-                newRequestJson.put("max_tokens", maxTokens);
-                newRequestJson.put("temperature", temperature);
-                newRequestJson.put("top_p", topP);
-
-                newRequestJson.put("messages", messages);
 
                 // Build Copilot API request headers
                 Map<String, String> copilotHeaders = HeadersInfo.getCopilotHeaders();
                 copilotHeaders.put("openai-intent", "conversation-panel");
                 copilotHeaders.put("Authorization", "Bearer " + receivedToken); // Update Token
-
+                System.out.println(requestJson.toString(4));
                 // Depending on whether it is a stream response, call different handling methods
                 if (isStream) {
                     if (!isO1) {
-                        handleStreamResponse(exchange, copilotHeaders, newRequestJson);
-                    } else {
-                        handleO1StreamResponse(exchange, copilotHeaders, newRequestJson);
+                        handleStreamResponse(exchange, copilotHeaders, requestJson);
+                    }
+                    else {
+                        handleO1StreamResponse(exchange, copilotHeaders, requestJson); // Only O1 Series change requestJson
                     }
                 } else {
-                    handleNormalResponse(exchange, copilotHeaders, newRequestJson);
+                    handleNormalResponse(exchange, copilotHeaders, requestJson);
                 }
 
             } catch (Exception e) {
