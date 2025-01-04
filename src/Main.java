@@ -9,24 +9,27 @@ import java.util.regex.Pattern;
 
 public class Main {
     private static final Pattern NUMBER_PATTERN = Pattern.compile("-?\\d+(\\.\\d+)?");
-    private static boolean isPort(String arg) {return arg != null && NUMBER_PATTERN.matcher(arg).matches();}
+
+    private static boolean isPort(String arg) {
+        return arg != null && NUMBER_PATTERN.matcher(arg).matches();
+    }
 
     /**
-     * 创建并返回一个HttpServer实例，尝试绑定到指定端口
+     * Creates and returns an HttpServer instance, attempting to bind to the specified port
      */
     public static HttpServer createHttpServer(int initialPort) throws IOException {
         int port = initialPort;
         HttpServer server = null;
 
-        // 循环尝试找到一个可用的端口
+        // Loop to try to find an available port
         while (server == null) {
             try {
-                server = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+                server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
                 System.out.println("Server started on port " + port);
             } catch (BindException e) {
                 if (port < 65535) {
                     System.out.println("Port " + port + " is already in use. Trying port " + (port + 1));
-                    port++; // 端口号加1
+                    port++; // Increment the port number
                 } else {
                     System.err.println("All ports from " + initialPort + " to 65535 are in use. Exiting.");
                     System.exit(1);
