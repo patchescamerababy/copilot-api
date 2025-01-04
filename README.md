@@ -89,3 +89,6 @@ claude-3.5-sonnet
 text-embedding-ada-002
 
 text-embedding-3-small-inference -> text-embedding-3-small
+## 
+
+### If this project is helpful, please give stars⭐
