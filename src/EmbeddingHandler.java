@@ -67,11 +67,8 @@ public class EmbeddingHandler implements HttpHandler {
                 System.out.println(requestBody);
                 JSONObject requestJson = new JSONObject(requestBody);
 
-                // Extract necessary fields
-                EmbeddingParameters params = extractEmbeddingParameters(requestJson);
-
                 // Send request to GitHub Copilot API and get response
-                handleEmbeddingRequest(exchange, params, receivedToken);
+                handleEmbeddingRequest(exchange, requestJson, receivedToken);
 
             } catch (JSONException e) {
                 logger.error(e.getMessage());
@@ -133,58 +130,14 @@ public class EmbeddingHandler implements HttpHandler {
         }
     }
 
-    /**
-     * Extract necessary parameters from the embedding request
-     */
-    private EmbeddingParameters extractEmbeddingParameters(JSONObject requestJson) throws JSONException {
-        // Extract "model"
-        String model = requestJson.optString("model", "text-embedding-3-small"); // Default to "text-embedding-3-small"
-
-        // Verify model exists and type matches
-        for (JSONObject m : ModelService.models) {
-            if (m.getString("id").equals(model) &&
-                    m.getJSONObject("capabilities").getString("type").equals("embeddings")) {
-                break;
-            }else {
-                model = "text-embedding-3-small";
-            }
-        }
-        // Extract "input"
-        Object inputObj = requestJson.opt("input");
-        List<String> inputs = new ArrayList<>();
-        if (inputObj instanceof JSONArray) {
-            JSONArray inputArray = (JSONArray) inputObj;
-            for (int i = 0; i < inputArray.length(); i++) {
-                inputs.add(inputArray.getString(i));
-            }
-        } else if (inputObj instanceof String) {
-            inputs.add((String) inputObj);
-        } else {
-            // Input format is incorrect
-            throw new JSONException("Invalid input format");
-        }
-
-        // Check if inputs are empty
-        if (inputs.isEmpty()) {
-            throw new JSONException("Input cannot be empty.");
-        }
-
-        // Extract "user" (optional)
-        String user = requestJson.optString("user", "");
-
-        return new EmbeddingParameters(model, inputs);
-    }
 
     /**
      * Handle embedding request
      */
-    private void handleEmbeddingRequest(HttpExchange exchange, EmbeddingParameters params, String receivedToken) throws IOException {
+    private void handleEmbeddingRequest(HttpExchange exchange, JSONObject jsonBody, String receivedToken) throws IOException {
         // Set request headers
         Map<String, String> headers = HeadersInfo.getCopilotHeaders();
         headers.put("Authorization", "Bearer " + receivedToken); // Update Token
-
-        // Build the request body
-        JSONObject jsonBody = constructEmbeddingRequestBody(params);
 
         // Build and send HttpURLConnection
         HttpURLConnection connection = createConnection(headers, jsonBody);
@@ -192,7 +145,7 @@ public class EmbeddingHandler implements HttpHandler {
         String responseBody = readStream(connection.getInputStream());
         System.out.println(formatJson(responseBody));
 
-        if (responseCode == HttpURLConnection.HTTP_OK) {
+        if (responseCode == 200) {
             // Return response body
             System.out.println("Received Embedding Response from Copilot API:");
             System.out.println(formatJson(responseBody));
@@ -213,22 +166,6 @@ public class EmbeddingHandler implements HttpHandler {
         }
     }
 
-    /**
-     * Construct the request body for OpenAI Embedding API
-     */
-    private JSONObject constructEmbeddingRequestBody(EmbeddingParameters params) {
-        JSONObject jsonBody = new JSONObject();
-        JSONArray inputArray = new JSONArray();
-
-        for (String input : params.inputs) {
-            inputArray.put(input);
-        }
-
-        jsonBody.put("model", params.model);
-        jsonBody.put("input", inputArray);
-
-        return jsonBody;
-    }
 
     /**
      * Create and configure HttpURLConnection
@@ -269,18 +206,4 @@ public class EmbeddingHandler implements HttpHandler {
         reader.close();
         return sb.toString();
     }
-
-    /**
-     * Inner class for storing embedding request parameters
-     */
-    private static class EmbeddingParameters {
-        String model;
-        List<String> inputs;
-
-        public EmbeddingParameters(String model, List<String> inputs) {
-            this.model = model;
-            this.inputs = inputs;
-        }
-    }
-
 }
