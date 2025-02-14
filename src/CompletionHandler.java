@@ -1,8 +1,6 @@
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -24,7 +22,6 @@ import java.util.stream.Collectors;
 public class CompletionHandler implements HttpHandler {
     private static final String COPILOT_CHAT_COMPLETIONS_URL = "https://api.individual.githubcopilot.com/chat/completions";
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
-    private static final Logger logger = LogManager.getLogger(CompletionHandler.class);
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -66,7 +63,7 @@ public class CompletionHandler implements HttpHandler {
                 // Read request headers
                 Headers requestHeaders = exchange.getRequestHeaders();
                 String authorizationHeader = requestHeaders.getFirst("Authorization");
-                if(!authorizationHeader.startsWith("Bearer ")) {
+                if (!authorizationHeader.startsWith("Bearer ")) {
                     sendError(exchange, "Token is invalid.", 401);
                     return;
                 }
@@ -84,17 +81,9 @@ public class CompletionHandler implements HttpHandler {
                 JSONObject requestJson = new JSONObject(requestBody);
 
                 // Extract parameters
-                String model = requestJson.optString("model", requestJson.getString("model"));
                 boolean isStream = requestJson.optBoolean("stream", false);
 
-                // Build a new request JSON, adapting to the Copilot API
-                boolean isO1 = false;
-                if (model.startsWith("o1")) {
-                    System.out.println("stream: false");
-                    isO1 = true;
-                } else {
-                    requestJson.put("stream", isStream);
-                }
+                requestJson.put("stream", isStream);
 
                 // Build Copilot API request headers
                 Map<String, String> copilotHeaders = HeadersInfo.getCopilotHeaders();
@@ -103,81 +92,16 @@ public class CompletionHandler implements HttpHandler {
                 System.out.println(requestJson.toString(4));
                 // Depending on whether it is a stream response, call different handling methods
                 if (isStream) {
-                    if (!isO1) {
-                        handleStreamResponse(exchange, copilotHeaders, requestJson);
-                    }
-                    else {
-                        handleO1StreamResponse(exchange, copilotHeaders, requestJson); // Only O1 Series change requestJson
-                    }
+                    handleStreamResponse(exchange, copilotHeaders, requestJson);
                 } else {
                     handleNormalResponse(exchange, copilotHeaders, requestJson);
                 }
 
             } catch (Exception e) {
-                logger.error(e.getMessage());
+                e.printStackTrace();
                 sendError(exchange, "Internal server error: " + e.getMessage(), 500);
             }
         });
-    }
-
-    private void handleO1StreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) {
-        try {
-            HttpURLConnection connection = createConnection(headers, requestJson);
-            int responseCode = connection.getResponseCode();
-
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                String errorResponse = readStream(connection.getErrorStream());
-                sendError(exchange, "API Error: " + responseCode + " - " + errorResponse, responseCode);
-                return;
-            }
-
-            String responseBody = readStream(connection.getInputStream());
-            JSONObject responseJson = new JSONObject(responseBody);
-            JSONArray choices = responseJson.optJSONArray("choices");
-            String assistantContent = "";
-            if (choices != null && !choices.isEmpty()) {
-                JSONObject firstChoice = choices.getJSONObject(0);
-                if (firstChoice.has("message")) {
-                    JSONObject message = firstChoice.getJSONObject("message");
-                    if (!message.isNull("content")) {
-                        assistantContent = message.optString("content", "");
-                    }
-                }
-            }
-
-            // Build OpenAI API style response JSON
-            JSONObject openAIResponse = new JSONObject();
-            openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID());
-            openAIResponse.put("object", "chat.completion");
-            openAIResponse.put("created", Instant.now().getEpochSecond());
-            openAIResponse.put("model", responseJson.optString("model", responseJson.optString("model", "o1")));
-            openAIResponse.put("system_fingerprint", openAIResponse.optString("system_fingerprint", "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
-
-            JSONArray choicesArray = new JSONArray();
-            JSONObject choiceObject = new JSONObject();
-            choiceObject.put("index", 0);
-
-            JSONObject messageObject = new JSONObject();
-            messageObject.put("role", "assistant");
-            messageObject.put("content", assistantContent);
-            System.out.println("Received: \n" + assistantContent);
-            choiceObject.put("message", messageObject);
-            choiceObject.put("finish_reason", "stop");
-            choicesArray.put(choiceObject);
-
-            openAIResponse.put("choices", choicesArray);
-
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            byte[] responseBytes = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, responseBytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseBytes);
-            }
-
-        } catch (Exception e) {
-            logger.error(e.getMessage());
-            sendError(exchange, "Error occurred while processing response: " + e.getMessage(), 500);
-        }
     }
 
     /**
@@ -262,7 +186,7 @@ public class CompletionHandler implements HttpHandler {
                 }
             }
         } catch (IOException e) {
-            logger.error(e.getMessage());
+            e.printStackTrace();
             sendError(exchange, "Failed to send response: " + e.getMessage(), 502);
         }
     }
@@ -340,7 +264,7 @@ public class CompletionHandler implements HttpHandler {
             }
 
         } catch (Exception e) {
-            logger.error(e.getMessage());
+            e.printStackTrace();
             sendError(exchange, "Error occurred while processing response: " + e.getMessage(), 500);
         }
     }
@@ -399,7 +323,7 @@ public class CompletionHandler implements HttpHandler {
                 os.write(bytes);
             }
         } catch (IOException e) {
-            logger.error(e.getMessage());
+            e.printStackTrace();
         }
     }
 }
