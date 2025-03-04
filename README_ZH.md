@@ -15,13 +15,9 @@ Copilot to OpenAI API
 
 ## Docker 
 
-    docker pull patchescamera/copilot2api:latest # AOT 编译二进制版本
+    docker pull patchescamera/copilot2api:latest
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
     
-#### 或JRE8版本
-
-    docker pull patchescamera/copilot2api:java
-    docker run -d -p 8080:80 patchescamera/copilot2api:java
 
 #### 测试
     curl -X POST http://127.0.0.1:8080/v1/chat/completions \
@@ -53,7 +49,11 @@ Copilot to OpenAI API
  
 #### id -> 默认版本(也可直接用此作为id)
 
-## Chat
+## 对话
+(仅
+**gpt-4o-2024-05-13**
+支持图片、"gpt-4o"现在默认以"gpt-4o-2024-08-06"发送)
+
 gpt-4o -> gpt-4o-2024-05-13
 
 gpt-4-o-preview -> gpt-4o-2024-05-13
