@@ -21,7 +21,7 @@ Copilot to OpenAI API
     docker pull patchescamera/copilot2api:latest # AOT compilation based on Graalvm
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
     
-#### OR JRE8 version
+#### OR Java version
 
     docker pull patchescamera/copilot2api:java
     docker run -d -p 8080:80 patchescamera/copilot2api:java
