@@ -26,7 +26,7 @@ Copilot to OpenAI API
     docker pull patchescamera/copilot2api:java
     docker run -d -p 8080:80 patchescamera/copilot2api:java
 
-#### Test
+#### Chat Test
     curl -X POST http://127.0.0.1:8080/v1/chat/completions \
      -H "Authorization: Bearer <Bearer>" \
      -H "Content-Type: application/json" \
@@ -40,6 +40,11 @@ Copilot to OpenAI API
            "stream": false
          }'
          
+#### Image Test
+     curl  -X POST http://127.0.0.1:8080/v1/chat/completions \
+      --header 'Authorization: Bearer <Bearer>' \
+      --header 'Content-Type: application/json' \
+      --data '{"messages":[{"role":"user","content":[{"type":"text","text":"What is this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAABGdBTUEAALGPC/xhBQAAAEBJREFUGNNjYACCBAWF/yCMzmaACVy4cOG/g4MDWAJEw9hwBTBBZAxXECwtjVUBSBxuDboiFEl0RVglkRUxkAoA6pU6bjl6zpsAAAAASUVORK5CYII="}}]}],"model":"gpt-4o","temperature":0.1,"top_p":0.9,"stream":false}'
 ## Build Rust based ***Get-Token*** on Debian/Ubuntu:
     sudo apt update
     sudo apt install -y libssl-dev pkg-config cargo
