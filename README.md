@@ -64,7 +64,11 @@ Run
  
 #### id -> default version(also could use that id)
 
-## Chat
+## Chat 
+(only
+**gpt-4o-2024-05-13**
+support vision)
+
 gpt-4o -> gpt-4o-2024-05-13
 
 gpt-4-o-preview -> gpt-4o-2024-05-13
