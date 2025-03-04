@@ -75,7 +75,7 @@ gpt-4-o-preview -> gpt-4o-2024-05-13
 
 gpt-4o-2024-08-06 -> gpt-4o-2024-08-06
 
-gpt-4o-2024-11-20 -> gpt-4o-2024-11-20
+gpt-4o-2024-11-20 -> gpt-4o-2024-11-20 # not work
 
 gpt-4 -> gpt-4-0613
 
@@ -83,9 +83,13 @@ gpt-4o-mini -> gpt-4o-mini-2024-07-18
 
 gpt-3.5-turbo -> gpt-3.5-turbo-0613
 
+o1 -> o1-2024-12-17  # pro/edu
+
 o3-mini -> o3-mini-2025-01-31
 
 claude-3.5-sonnet
+
+claude-3.7-sonnet # pro/edu
 
 gemini-2.0-flash-001
 
