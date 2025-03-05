@@ -1,6 +1,4 @@
 import com.sun.net.httpserver.HttpExchange;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.json.JSONObject;
 
 import java.io.*;
@@ -16,7 +14,6 @@ import java.util.concurrent.locks.ReentrantLock;
 public class utils {
     private static final ReentrantLock tokenLock = new ReentrantLock();
     private static final TokenManager tokenManager = new TokenManager();
-    private static final Logger logger = LogManager.getLogger(utils.class);
 
     public static String GetToken(String longTermToken) {
         try {
@@ -39,7 +36,6 @@ public class utils {
             if (responseCode >= 200 && responseCode < 300) {
                 String responseBody = readStream(connection.getInputStream());
                 JSONObject jsonObject = new JSONObject(responseBody);
-                System.out.println(responseBody);
                 if (jsonObject.has("token")) {
                     String token = jsonObject.getString("token");
                     System.out.println("\nNew Token:\n " + token);
@@ -54,7 +50,7 @@ public class utils {
             }
             return null;
         } catch (Exception e) {
-            logger.error("Failed to get token: {}", e.getMessage());
+            e.printStackTrace();
             return null;
         }
     }
@@ -109,7 +105,7 @@ public class utils {
                 os.write(bytes);
             }
         } catch (IOException e) {
-            logger.error("Failed to send error response: {}", e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -155,7 +151,7 @@ public class utils {
         int seconds = remainingSeconds % 60;
 
         // Print results
-        System.out.println("Current epoch: " + currentEpoch);
+        System.out.println("\n   Current epoch: " + currentEpoch);
         System.out.println("Expiration epoch: " + exp);
         System.out.println("  Current  time: " + formattedCurrent);
         System.out.println("Expiration time: " + formattedExpiration);
@@ -231,5 +227,47 @@ public class utils {
         }
         reader.close();
         return sb.toString();
+    }
+
+    public static byte[] decodeImageData(String dataUrl) {
+        try {
+            String[] parts = dataUrl.split(",");
+            if (parts.length != 2) {
+                System.err.println("无效的 data URL 格式。");
+                return null;
+            }
+            String base64Data = parts[1];
+            byte[] imageBytes = java.util.Base64.getDecoder().decode(base64Data);
+            return imageBytes;
+        } catch (IllegalArgumentException e) {
+            System.err.println("Base64 解码失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    public static byte[] downloadImageData(String imageUrl) {
+        try {
+            URL url = new URL(imageUrl);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.connect();
+            int responseCode = conn.getResponseCode();
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                System.err.println("Failed to download image, response code: " + responseCode);
+                return null;
+            }
+            InputStream is = conn.getInputStream();
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int n;
+            while ((n = is.read(buffer)) != -1) {
+                baos.write(buffer, 0, n);
+            }
+            is.close();
+            return baos.toByteArray();
+        } catch (IOException e) {
+            System.err.println("Failed to download image: " + e.getMessage());
+            return null;
+        }
     }
 }
