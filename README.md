@@ -26,6 +26,8 @@ Copilot to OpenAI API
     docker pull patchescamera/copilot2api:java
     docker run -d -p 8080:80 patchescamera/copilot2api:java
 
+#### Now you can compile this project using Github Actions
+
 #### Chat Test
     curl -X POST http://127.0.0.1:8080/v1/chat/completions \
      -H "Authorization: Bearer <Bearer>" \
