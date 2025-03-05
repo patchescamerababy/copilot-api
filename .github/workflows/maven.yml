@@ -52,10 +52,7 @@ jobs:
           --initialize-at-build-time=Main \
           --initialize-at-build-time=CompletionHandler \
           --initialize-at-build-time=EmbeddingHandler \
-          --initialize-at-build-time=HeadersInfo \
-          --initialize-at-build-time=TokenManager \
-          --initialize-at-build-time=utils
-
+          --initialize-at-build-time=HeadersInfo 
     - name: Upload Native Image
       uses: actions/upload-artifact@v4
       with:
