@@ -4,11 +4,11 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - 'rust/**'
+      - 'src/rust/**'
   pull_request:
     branches: [ "main" ]
     paths:
-      - 'rust/**'
+      - 'src/rust/**'
 
 env:
   CARGO_TERM_COLOR: always
