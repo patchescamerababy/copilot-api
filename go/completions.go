@@ -115,10 +115,10 @@ func CompletionHandler(w http.ResponseWriter, r *http.Request) {
 	headers["Authorization"] = "Bearer " + tempToken
 	if hasImage {
 		headers["copilot-vision-request"] = "true"
+	}else{
+		headers["copilot-vision-request"] = "false"
 	}
-	// 打印发送的请求
-	jsonBytes, _ := json.MarshalIndent(reqJSON, "", "  ")
-	log.Printf("发送的请求: %s", string(jsonBytes))
+
 
 	// 根据是否为流式响应调用不同处理方法
 	if isStream {
