@@ -1,8 +1,6 @@
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.json.JSONObject;
 import org.json.JSONArray;
 
@@ -15,7 +13,6 @@ import java.util.concurrent.Executors;
 
 public class ModelsHandler implements HttpHandler {
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
-    private static final Logger logger = LogManager.getLogger(ModelsHandler.class);
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -75,7 +72,7 @@ public class ModelsHandler implements HttpHandler {
                 }
 
             } catch (Exception e) {
-                logger.error("Internal Server Error: {}", e.getMessage());
+                e.printStackTrace();
                 sendError(exchange, "Internal Server Error: " + e.getMessage(), 500);
             }
         });
@@ -95,7 +92,7 @@ public class ModelsHandler implements HttpHandler {
                 os.write(bytes);
             }
         } catch (IOException e) {
-            logger.error("Failed to send error response: {}", e.getMessage());
+            e.printStackTrace();
         }
     }
 }
