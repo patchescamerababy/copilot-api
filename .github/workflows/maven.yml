@@ -56,11 +56,65 @@ jobs:
     - name: Build with Maven
       run: mvn -B clean package assembly:single --file pom.xml
 
-    - name: Rename JAR file
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
+    # Windows 专用的准备步骤
+    - name: Prepare for Native Image (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: cmd
       run: |
-        mkdir -p dist
-        cp target/*-jar-with-dependencies.jar dist/Copilot-api.jar
+        mkdir target\native-image
+        for /f "tokens=*" %%f in ('dir /b target\*-jar-with-dependencies.jar') do copy "target\%%f" "target\native-image\Copilot-api.jar"
+
+    # Linux/macOS 专用的准备步骤
+    - name: Prepare for Native Image (Unix)
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
+        mkdir -p target/native-image
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
+          mkdir -p dist
+          cp target/*-jar-with-dependencies.jar dist/Copilot-api.jar
+          cp dist/Copilot-api.jar target/native-image/
+        else
+          cp target/*-jar-with-dependencies.jar target/native-image/Copilot-api.jar
+        fi
+
+    # Windows 专用的构建步骤
+    - name: Build Native Image (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      run: |
+        cd target\native-image
+        native-image.cmd ^
+        -H:+AddAllCharsets ^
+        -jar Copilot-api.jar ^
+        -H:Name=Copilot-api ^
+        --enable-https ^
+        --enable-http ^
+        --static ^
+        --no-fallback ^
+        --initialize-at-build-time=Main ^
+        --initialize-at-build-time=CompletionHandler ^
+        --initialize-at-build-time=EmbeddingHandler ^
+        --initialize-at-build-time=HeadersInfo
+
+    # Linux/macOS 专用的构建步骤
+    - name: Build Native Image (Unix)
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      run: |
+        cd target/native-image
+        native-image \
+          -H:+AddAllCharsets \
+          -jar Copilot-api.jar \
+          -H:Name=Copilot-api \
+          --enable-https \
+          --enable-http \
+          --static \
+          --no-fallback \
+          --initialize-at-build-time=Main \
+          --initialize-at-build-time=CompletionHandler \
+          --initialize-at-build-time=EmbeddingHandler \
+          --initialize-at-build-time=HeadersInfo
 
     - name: Upload JAR
       if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
@@ -70,54 +124,11 @@ jobs:
         path: dist/Copilot-api.jar
         retention-days: 5
 
-    - name: Prepare for Native Image
-      shell: bash
-      run: |
-        mkdir -p target/native-image
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
-          cp dist/Copilot-api.jar target/native-image/
-        else
-          cp target/*-jar-with-dependencies.jar target/native-image/Copilot-api.jar
-        fi
-
-    - name: Build Native Image
-      shell: bash
-      run: |
-        cd target/native-image
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          native-image \
-            -H:+AddAllCharsets \
-            -jar Copilot-api.jar \
-            -H:Name=Copilot-api \
-            --enable-https \
-            --enable-http \
-            --static \
-            --no-fallback \
-            --initialize-at-build-time=Main \
-            --initialize-at-build-time=CompletionHandler \
-            --initialize-at-build-time=EmbeddingHandler \
-            --initialize-at-build-time=HeadersInfo
-        else
-          native-image \
-            -H:+AddAllCharsets \
-            -jar Copilot-api.jar \
-            -H:Name=Copilot-api \
-            --enable-https \
-            --enable-http \
-            --static \
-            --no-fallback \
-            --initialize-at-build-time=Main \
-            --initialize-at-build-time=CompletionHandler \
-            --initialize-at-build-time=EmbeddingHandler \
-            --initialize-at-build-time=HeadersInfo
-        fi
-
     - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.label }}-build
-        path: |
-          target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        path: target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
 
     - name: Create Release
