@@ -21,8 +21,12 @@ permissions:
   packages: write
 
 jobs:
+  version:
+    uses: ./.github/workflows/version.yml
+
   java-build:
     runs-on: ${{ matrix.os }}
+    needs: version
     strategy:
       matrix:
         include:
@@ -57,31 +61,40 @@ jobs:
     - name: Build with Maven
       run: mvn -B clean package assembly:single --file pom.xml
 
-    - name: Upload JAR Artifacts
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
-      uses: actions/upload-artifact@v4
-      with:
-        name: jar-files
-        path: |
-          target/*[^s].jar
-          target/*-with-dependencies.jar
-          target/*-sources.jar
-          target/*-javadoc.jar
-        retention-days: 5
-
-    - name: Build Native Image
+    - name: Prepare Native Image Directory
       shell: bash
       run: |
         mkdir -p target/native-image
         cp target/*-with-dependencies.jar target/native-image/Copilot-api.jar
-        cd target/native-image
+
+    - name: Build Native Image (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      working-directory: target/native-image
+      run: |
+        native-image.cmd ^
+        -H:+AddAllCharsets ^
+        -jar Copilot-api.jar ^
+        -H:Name=Java-Copilot-${{ matrix.label }} ^
+        --enable-https ^
+        --enable-http ^
+        --no-fallback ^
+        --initialize-at-build-time=Main ^
+        --initialize-at-build-time=CompletionHandler ^
+        --initialize-at-build-time=EmbeddingHandler ^
+        --initialize-at-build-time=HeadersInfo
+
+    - name: Build Native Image (Unix)
+      if: matrix.os != 'windows-latest'
+      shell: bash
+      working-directory: target/native-image
+      run: |
         native-image \
           -H:+AddAllCharsets \
           -jar Copilot-api.jar \
           -H:Name=Java-Copilot-${{ matrix.label }} \
           --enable-https \
           --enable-http \
-          ${{ startsWith(matrix.os, 'ubuntu') && '--static' || '' }} \
           --no-fallback \
           --initialize-at-build-time=Main \
           --initialize-at-build-time=CompletionHandler \
@@ -95,28 +108,48 @@ jobs:
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
 
+    - name: Upload JARs
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
+      uses: actions/upload-artifact@v4
+      with:
+        name: jar-files
+        path: |
+          target/*[^s].jar
+          target/*-with-dependencies.jar
+          target/*-sources.jar
+          target/*-javadoc.jar
+        retention-days: 5
+
+
   go-build:
     runs-on: ubuntu-latest
+    needs: version
     strategy:
       matrix:
         include:
           - goos: windows
             goarch: amd64
+            suffix: .exe
             label: windows-amd64
           - goos: windows
             goarch: arm64
+            suffix: .exe
             label: windows-arm64
           - goos: linux
             goarch: amd64
+            suffix: ''
             label: linux-amd64
           - goos: linux
             goarch: arm64
+            suffix: ''
             label: linux-arm64
           - goos: darwin
             goarch: amd64
+            suffix: ''
             label: macos-amd64
           - goos: darwin
             goarch: arm64
+            suffix: ''
             label: macos-arm64
 
     steps:
@@ -133,18 +166,18 @@ jobs:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
       run: |
-        output_name="Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}"
+        output_name="Go-Copilot-${{ matrix.label }}${{ matrix.suffix }}"
         go build -o "$output_name" -v ./...
 
     - name: Upload Build
       uses: actions/upload-artifact@v4
       with:
         name: go-${{ matrix.label }}
-        path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
+        path: go/Go-Copilot-${{ matrix.label }}${{ matrix.suffix }}
         retention-days: 5
 
   release:
-    needs: [java-build, go-build]
+    needs: [version, java-build, go-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -159,18 +192,19 @@ jobs:
         with:
           path: artifacts
 
-      - name: Create version
-        id: version
+      - name: Prepare Release Files
         run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          mkdir -p release-files
+          # Copy all artifacts to release directory
+          cp -r artifacts/*/* release-files/
+          ls -la release-files/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
-          files: artifacts/**/*
+          tag_name: v${{ needs.version.outputs.version }}
+          name: Release ${{ needs.version.outputs.version }}
+          files: release-files/*
           draft: false
           prerelease: false
           generate_release_notes: true
