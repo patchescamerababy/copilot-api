@@ -11,7 +11,7 @@ Copilot to OpenAI API
 0. **⚠推荐**: <a href="https://github.com/signup">注册</a>一个新账户
 1. 打开 *<a href="https://github.com/patchescamerababy/copilot2api/releases">Get-token</a>* 程序，在浏览器中打开 <a href="https://github.com/login/device">URL</a> 并登录以授权次获取token
 2. 保存此token并在客户端应用中使用
-3. 运行 <a href="https://github.com/patchescamerababy/copilot2api/releases/">服务端程序</a> 或Docker部署
+3. 运行 <a href="https://github.com/patchescamerababy/copilot2api/releases/">服务端程序</a> 或Docker部署，或者使用Github Actions构建可执行文件
 
 ## Docker 
 
