@@ -78,13 +78,13 @@ jobs:
       if: matrix.os == 'windows-latest'
       shell: cmd
       run: |
-        mkdir -p target\native-image
-        copy target\*-with-dependencies.jar target\native-image\Copilot-api.jar
+        mkdir target\native-image
+        copy target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target\native-image\Copilot-api.jar
         cd target\native-image
         native-image.cmd ^
         -H:+AddAllCharsets ^
         -jar Copilot-api.jar ^
-        -H:Name=Java-Copilot-%{{ matrix.label }}% ^
+        -H:Name=Java-Copilot-${{ matrix.label }} ^
         --enable-https ^
         --enable-http ^
         --static ^
@@ -93,6 +93,7 @@ jobs:
         --initialize-at-build-time=CompletionHandler ^
         --initialize-at-build-time=EmbeddingHandler ^
         --initialize-at-build-time=HeadersInfo
+
 
     - name: Build Native Image (Linux/MacOS)
       if: matrix.os != 'windows-latest'
