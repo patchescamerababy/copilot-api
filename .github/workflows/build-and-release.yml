@@ -21,12 +21,8 @@ permissions:
   packages: write
 
 jobs:
-  version:
-    uses: ./.github/workflows/version.yml
-
   java-build:
     runs-on: ${{ matrix.os }}
-    needs: version
     strategy:
       matrix:
         include:
@@ -122,7 +118,6 @@ jobs:
 
   go-build:
     runs-on: ubuntu-latest
-    needs: version
     strategy:
       matrix:
         include:
@@ -176,13 +171,12 @@ jobs:
           retention-days: 5
 
   release:
-    needs: [version, java-build, go-build]
+    needs: [java-build, go-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
       packages: write
-    
     steps:
       - uses: actions/checkout@v4
 
@@ -194,15 +188,20 @@ jobs:
       - name: Prepare Release Files
         run: |
           mkdir -p release-files
-          # 将所有 artifact 复制到发布目录
           cp -r artifacts/*/* release-files/
           ls -la release-files/
+
+      - name: Set version
+        id: set_version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ needs.version.outputs.version }}
-          name: Release ${{ needs.version.outputs.version }}
+          tag_name: v${{ steps.set_version.outputs.version }}
+          name: Release ${{ steps.set_version.outputs.version }}
           files: release-files/*
           draft: false
           prerelease: false
@@ -261,7 +260,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Create version
-        id: version
+        id: set_version
         run: |
           VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -310,19 +309,18 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ matrix.tag_prefix }}-${{ matrix.platform == 'linux/amd64' ? 'amd64' : 'arm64' }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ matrix.tag_prefix }}-${{ steps.version.outputs.version }}-${{ matrix.platform == 'linux/amd64' ? 'amd64' : 'arm64' }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ matrix.tag_prefix }}-${{ steps.set_version.outputs.version }}-${{ matrix.platform == 'linux/amd64' ? 'amd64' : 'arm64' }}
             ghcr.io/${{ github.repository_owner }}/copilot:${{ matrix.tag_prefix }}-${{ matrix.platform == 'linux/amd64' ? 'amd64' : 'arm64' }}
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ matrix.tag_prefix }}-${{ steps.version.outputs.version }}-${{ matrix.platform == 'linux/amd64' ? 'amd64' : 'arm64' }}
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ matrix.tag_prefix }}-${{ steps.set_version.outputs.version }}-${{ matrix.platform == 'linux/amd64' ? 'amd64' : 'arm64' }}
 
   docker-manifest:
     needs: docker
     runs-on: ubuntu-latest
     permissions:
       packages: write
-    
     steps:
       - name: Create version
-        id: version
+        id: set_version
         run: |
           VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -348,19 +346,19 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64
           docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest
 
-          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ steps.version.outputs.version }}-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ steps.version.outputs.version }}-arm64
-          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.set_version.outputs.version }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ steps.set_version.outputs.version }}-amd64 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ steps.set_version.outputs.version }}-arm64
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.set_version.outputs.version }}
 
           # Java JAR images
           docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-amd64
           docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java
 
-          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.version.outputs.version }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.version.outputs.version }}-amd64
-          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.version.outputs.version }}
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.set_version.outputs.version }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.set_version.outputs.version }}-amd64
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.set_version.outputs.version }}
 
           # Go images
           docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go \
@@ -368,10 +366,10 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-arm64
           docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go
 
-          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.version.outputs.version }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.version.outputs.version }}-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.version.outputs.version }}-arm64
-          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.version.outputs.version }}
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.set_version.outputs.version }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.set_version.outputs.version }}-amd64 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.set_version.outputs.version }}-arm64
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.set_version.outputs.version }}
 
           # GitHub Container Registry manifests (GraalVM)
           docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:latest \
@@ -379,19 +377,19 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64
           docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:latest
 
-          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }} \
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ steps.version.outputs.version }}-arm64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}
+          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.set_version.outputs.version }} \
+            ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ steps.set_version.outputs.version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ steps.set_version.outputs.version }}-arm64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.set_version.outputs.version }}
 
           # GitHub Container Registry manifests (Java JAR)
           docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:java \
             ghcr.io/${{ github.repository_owner }}/copilot:java-amd64
           docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:java
 
-          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.version.outputs.version }} \
-            ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.version.outputs.version }}-amd64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.version.outputs.version }}
+          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.set_version.outputs.version }} \
+            ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.set_version.outputs.version }}-amd64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.set_version.outputs.version }}
 
           # GitHub Container Registry manifests (Go)
           docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:go \
@@ -399,7 +397,7 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/copilot:go-arm64
           docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:go
 
-          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.version.outputs.version }} \
-            ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.version.outputs.version }}-arm64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.version.outputs.version }}
+          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.set_version.outputs.version }} \
+            ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.set_version.outputs.version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.set_version.outputs.version }}-arm64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.set_version.outputs.version }}
