@@ -1,5 +1,7 @@
-use reqwest::Client;
+use clipboard::{ClipboardContext, ClipboardProvider};
+use reqwest::{Client, Proxy};
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::error::Error;
 use std::io::{self, Write};
 use std::time::Duration;
@@ -12,6 +14,7 @@ const ACCESS_TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
 
 #[derive(Debug)]
 enum LoginError {
+    AuthPending,
     ExpiredToken,
     NetworkError,
     OtherError(String),
@@ -22,14 +25,24 @@ struct DeviceCodeResponse {
     device_code: String,
     user_code: String,
     verification_uri: String,
+    expires_in: u64,
     interval: u64,
 }
 
 #[derive(Debug, Deserialize)]
 struct AccessTokenResponse {
     access_token: Option<String>,
+    token_type: Option<String>,
+    scope: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
+}
+
+// 添加复制到剪贴板的辅助函数
+fn copy_to_clipboard(text: &str) -> Result<(), Box<dyn Error>> {
+    let mut ctx: ClipboardContext = ClipboardProvider::new()?;
+    ctx.set_contents(text.to_owned())?;
+    Ok(())
 }
 
 #[tokio::main]
@@ -40,7 +53,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 获取设备代码信息
     let device_code_resp = match get_device_code(&client).await {
-        Ok(resp) => resp,
+        Ok(resp) => {
+            // 将设备码复制到剪贴板
+            if let Err(e) = copy_to_clipboard(&resp.user_code) {
+                eprintln!("无法复制设备码到剪贴板: {}", e);
+            } else {
+                println!("设备码已复制到剪贴板!");
+            }
+            resp
+        }
         Err(e) => {
             eprintln!("获取设备代码失败: {:?}", e);
             prompt_exit();
@@ -50,11 +71,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // 自动打开默认浏览器并指向验证URI
     if let Err(e) = open_browser_with_code(&device_code_resp) {
-        eprintln!("无法打开浏览器");
+        eprintln!("无法打开浏览器: {}", e);
+        eprintln!(
+            "请手动在浏览器中打开 {} 并输入代码 {} 以登录。",
+            device_code_resp.verification_uri, device_code_resp.user_code
+        );
     }
 
     println!(
-        "如果浏览器未打开，请在浏览器中访问 {} 并输入 {} 以登录。",
+        "如果浏览器未自动打开，请在浏览器中访问 {} 并输入代码 {} 以登录。",
         device_code_resp.verification_uri, device_code_resp.user_code
     );
 
@@ -62,6 +87,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     match poll_access_token(&client, &device_code_resp).await {
         Ok(token) => {
             println!("Token是:\n{}", token);
+            // 将token复制到剪贴板
+            if let Err(e) = copy_to_clipboard(&token) {
+                eprintln!("无法复制Token到剪贴板: {}", e);
+            } else {
+                println!("Token已复制到剪贴板!");
+            }
         }
         Err(e) => {
             eprintln!("获取Token失败: {:?}", e);
@@ -74,15 +105,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+/// 配置HTTP客户端，自动检测系统代理
 async fn configure_client() -> Result<Client, Box<dyn Error>> {
     let client_builder = Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent("Rust OAuth Device Flow");
 
+    // `reqwest` 默认会自动检测系统代理设置，无需手动配置
     let client = client_builder.build()?;
     Ok(client)
 }
 
+/// 获取设备代码信息
 async fn get_device_code(client: &Client) -> Result<DeviceCodeResponse, Box<dyn Error>> {
     #[derive(Serialize)]
     struct DeviceCodeRequest<'a> {
@@ -117,6 +151,7 @@ async fn get_device_code(client: &Client) -> Result<DeviceCodeResponse, Box<dyn 
     }
 }
 
+/// 轮询获取访问令牌
 async fn poll_access_token(
     client: &Client,
     device_code_resp: &DeviceCodeResponse,
@@ -199,6 +234,7 @@ async fn poll_access_token(
     }
 }
 
+/// 自动打开默认浏览器并指向验证URI
 fn open_browser_with_code(device_code_resp: &DeviceCodeResponse) -> Result<(), Box<dyn Error>> {
     let url = format!(
         "{}?user_code={}",
@@ -208,6 +244,7 @@ fn open_browser_with_code(device_code_resp: &DeviceCodeResponse) -> Result<(), B
     Ok(())
 }
 
+/// 提示用户按下Enter后退出
 fn prompt_exit() {
     print!("按下 Enter 键以退出...");
     io::stdout().flush().unwrap();
