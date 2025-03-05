@@ -14,6 +14,10 @@ on:
       - 'pom.xml'
       - '.github/workflows/**'
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: ${{ matrix.os }}
@@ -43,13 +47,6 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: Get version
-      id: get_version
-      shell: bash
-      run: |
-        VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
 
     - name: Setup GraalVM
       uses: graalvm/setup-graalvm@v1
@@ -91,11 +88,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: jar-files
-        path: |
-          dist/Copilot-api-original.jar
-          dist/Copilot-api-with-dependencies.jar
-          dist/Copilot-api-sources.jar
-          dist/Copilot-api-javadoc.jar
+        path: dist/*.jar
         retention-days: 5
 
     - name: Prepare for Native Image
@@ -161,55 +154,65 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: ${{ matrix.label }}-build
-        path: |
-          target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        path: target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
 
   release:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    
     steps:
       - uses: actions/checkout@v4
-
-      - name: Get version
-        id: get_version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: "*-build"
-          merge-multiple: true
           path: artifacts
 
-      - name: Download JAR files
-        uses: actions/download-artifact@v4
-        with:
-          name: jar-files
-          path: artifacts/jar
+      - name: Prepare Release Files
+        run: |
+          mkdir -p release-files
+          # Move native binaries
+          if [ -f "artifacts/linux-amd64-build/Copilot-api" ]; then
+            cp "artifacts/linux-amd64-build/Copilot-api" release-files/
+          fi
+          if [ -f "artifacts/windows-build/Copilot-api.exe" ]; then
+            cp "artifacts/windows-build/Copilot-api.exe" release-files/
+          fi
+          # Move JAR files
+          cp artifacts/jar-files/* release-files/ || true
+
+      - name: Create Release Tag
+        id: tag
+        run: |
+          TAG="v$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          git tag $TAG
+          git push origin $TAG
 
       - name: Create Release
-        id: create_release
         uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: v${{ steps.get_version.outputs.version }}
-          name: Release ${{ steps.get_version.outputs.version }}
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          files: release-files/*
           draft: false
           prerelease: false
-          files: |
-            artifacts/Copilot-api
-            artifacts/Copilot-api.exe
-            artifacts/jar/*.jar
           generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
     needs: release
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
     strategy:
       matrix:
         platform: [linux/amd64, linux/arm64]
@@ -281,6 +284,9 @@ jobs:
   docker-manifest:
     needs: docker
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    
     steps:
       - name: Get version
         id: get_version
@@ -303,13 +309,11 @@ jobs:
 
       - name: Create and push manifest for Docker Hub
         run: |
-          # Latest manifest
           docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64
           docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest
 
-          # Version manifest
           docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }} \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-amd64 \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-arm64
@@ -317,13 +321,11 @@ jobs:
 
       - name: Create and push manifest for GitHub Container Registry
         run: |
-          # Latest manifest
           docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:latest \
             ghcr.io/${{ github.repository_owner }}/copilot:latest-amd64 \
             ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64
           docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:latest
 
-          # Version manifest
           docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }} \
             ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-amd64 \
             ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-arm64
