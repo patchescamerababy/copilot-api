@@ -5,12 +5,14 @@ on:
     branches: [ "main" ]
     paths:
       - 'src/**'
+      - 'go/**'
       - 'pom.xml'
       - '.github/workflows/**'
   pull_request:
     branches: [ "main" ]
     paths:
       - 'src/**'
+      - 'go/**'
       - 'pom.xml'
       - '.github/workflows/**'
 
@@ -19,31 +21,30 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  version:
+    uses: ./.github/workflows/version.yml
+
+  java-build:
     runs-on: ${{ matrix.os }}
+    needs: version
     strategy:
       matrix:
         include:
           - os: ubuntu-latest
             arch: amd64
             label: linux-amd64
-            static: true
           - os: ubuntu-latest
             arch: arm64
             label: linux-arm64
-            static: true
           - os: windows-latest
             arch: amd64
-            label: windows
-            static: true
+            label: windows-amd64
           - os: macos-latest
             arch: amd64
-            label: macos-x64
-            static: false
+            label: macos-amd64
           - os: macos-14
             arch: arm64
             label: macos-arm64
-            static: false
 
     steps:
     - uses: actions/checkout@v4
@@ -57,108 +58,103 @@ jobs:
         native-image-job-reports: 'true'
         architecture: ${{ matrix.arch }}
 
-    - name: Cache Maven packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.m2
-        key: ${{ runner.os }}-${{ matrix.arch }}-m2-${{ hashFiles('**/pom.xml') }}
-        restore-keys: ${{ runner.os }}-${{ matrix.arch }}-m2
-
     - name: Build with Maven
       run: mvn -B clean package assembly:single --file pom.xml
 
-    - name: Prepare Artifacts Directory
-      shell: bash
-      run: mkdir -p dist
-
-    - name: Copy JAR files
-      shell: bash
+    - name: Build Native Image
       run: |
-        # Copy the regular JAR
-        cp target/*[^s].jar dist/Copilot-api-original.jar
-        # Copy the JAR with dependencies
-        cp target/*-with-dependencies.jar dist/Copilot-api-with-dependencies.jar
-        # Copy the sources JAR if it exists
-        cp target/*-sources.jar dist/Copilot-api-sources.jar || true
-        # Copy the javadoc JAR if it exists
-        cp target/*-javadoc.jar dist/Copilot-api-javadoc.jar || true
+        mkdir -p target/native-image
+        cp target/*-with-dependencies.jar target/native-image/Copilot-api.jar
+        cd target/native-image
+        native-image \
+          -H:+AddAllCharsets \
+          -jar Copilot-api.jar \
+          -H:Name=Java-Copilot-${{ matrix.label }} \
+          --enable-https \
+          --enable-http \
+          --no-fallback \
+          --initialize-at-build-time=Main \
+          --initialize-at-build-time=CompletionHandler \
+          --initialize-at-build-time=EmbeddingHandler \
+          --initialize-at-build-time=HeadersInfo
+      shell: bash
 
-    - name: Upload JAR Artifacts
+    - name: Upload Native Build
+      uses: actions/upload-artifact@v4
+      with:
+        name: java-${{ matrix.label }}
+        path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        retention-days: 5
+
+    - name: Upload JARs
       if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
       uses: actions/upload-artifact@v4
       with:
         name: jar-files
-        path: dist/*.jar
+        path: |
+          target/*[^s].jar
+          target/*-with-dependencies.jar
+          target/*-sources.jar
+          target/*-javadoc.jar
         retention-days: 5
 
-    - name: Prepare for Native Image
-      shell: bash
-      run: |
-        mkdir -p target/native-image
-        cp dist/Copilot-api-with-dependencies.jar target/native-image/Copilot-api.jar
+  go-build:
+    runs-on: ubuntu-latest
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            suffix: .exe
+            label: windows-amd64
+          - goos: windows
+            goarch: arm64
+            suffix: .exe
+            label: windows-arm64
+          - goos: linux
+            goarch: amd64
+            suffix: ''
+            label: linux-amd64
+          - goos: linux
+            goarch: arm64
+            suffix: ''
+            label: linux-arm64
+          - goos: darwin
+            goarch: amd64
+            suffix: ''
+            label: macos-amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: ''
+            label: macos-arm64
 
-    - name: Build Native Image (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: cmd
-      run: |
-        cd target\native-image
-        native-image.cmd ^
-        -H:+AddAllCharsets ^
-        -jar Copilot-api.jar ^
-        -H:Name=Copilot-api ^
-        --enable-https ^
-        --enable-http ^
-        --static ^
-        --no-fallback ^
-        --initialize-at-build-time=Main ^
-        --initialize-at-build-time=CompletionHandler ^
-        --initialize-at-build-time=EmbeddingHandler ^
-        --initialize-at-build-time=HeadersInfo
+    steps:
+    - uses: actions/checkout@v4
 
-    - name: Build Native Image (Linux)
-      if: startsWith(matrix.os, 'ubuntu')
-      shell: bash
-      run: |
-        cd target/native-image
-        native-image \
-          -H:+AddAllCharsets \
-          -jar Copilot-api.jar \
-          -H:Name=Copilot-api \
-          --enable-https \
-          --enable-http \
-          --static \
-          --no-fallback \
-          --initialize-at-build-time=Main \
-          --initialize-at-build-time=CompletionHandler \
-          --initialize-at-build-time=EmbeddingHandler \
-          --initialize-at-build-time=HeadersInfo
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
 
-    - name: Build Native Image (macOS)
-      if: startsWith(matrix.os, 'macos')
-      shell: bash
+    - name: Build
+      working-directory: ./go
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
       run: |
-        cd target/native-image
-        native-image \
-          -H:+AddAllCharsets \
-          -jar Copilot-api.jar \
-          -H:Name=Copilot-api \
-          --enable-https \
-          --enable-http \
-          --no-fallback \
-          --initialize-at-build-time=Main \
-          --initialize-at-build-time=CompletionHandler \
-          --initialize-at-build-time=EmbeddingHandler \
-          --initialize-at-build-time=HeadersInfo
+        output_name="Go-Copilot-${{ matrix.label }}${{ matrix.suffix }}"
+        go build -o "$output_name" -v ./...
 
-    - name: Upload Native Build Artifact
+    - name: Upload Build
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ matrix.label }}-build
-        path: target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        name: go-${{ matrix.label }}
+        path: go/Go-Copilot-${{ matrix.label }}${{ matrix.suffix }}
         retention-days: 5
 
   release:
-    needs: build
+    needs: [version, java-build, go-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -176,29 +172,15 @@ jobs:
       - name: Prepare Release Files
         run: |
           mkdir -p release-files
-          # Move native binaries
-          if [ -f "artifacts/linux-amd64-build/Copilot-api" ]; then
-            cp "artifacts/linux-amd64-build/Copilot-api" release-files/
-          fi
-          if [ -f "artifacts/windows-build/Copilot-api.exe" ]; then
-            cp "artifacts/windows-build/Copilot-api.exe" release-files/
-          fi
-          # Move JAR files
-          cp artifacts/jar-files/* release-files/ || true
-
-      - name: Create Release Tag
-        id: tag
-        run: |
-          TAG="v$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          git tag $TAG
-          git push origin $TAG
+          # Copy all artifacts to release directory
+          cp -r artifacts/*/* release-files/
+          ls -la release-files/
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
+          tag_name: v${{ needs.version.outputs.version }}
+          name: Release ${{ needs.version.outputs.version }}
           files: release-files/*
           draft: false
           prerelease: false
@@ -207,20 +189,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   docker:
-    needs: release
+    needs: [version, release]
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    
     strategy:
       matrix:
         platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
-            artifact: linux-amd64-build
+            artifact: java-linux-amd64
           - platform: linux/arm64
-            artifact: linux-arm64-build
+            artifact: java-linux-arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -236,12 +214,6 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-
-      - name: Get version
-        id: get_version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -259,7 +231,7 @@ jobs:
       - name: Prepare Dockerfile
         run: |
           mkdir -p docker
-          cp build/Copilot-api docker/Copilot
+          cp build/Java-Copilot-${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }} docker/Copilot
           cat > docker/Dockerfile << 'EOF'
           FROM ubuntu:22.04
           WORKDIR /app
@@ -277,23 +249,17 @@ jobs:
           push: true
           tags: |
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ needs.version.outputs.version }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
             ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ needs.version.outputs.version }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
 
   docker-manifest:
-    needs: docker
+    needs: [version, docker]
     runs-on: ubuntu-latest
     permissions:
       packages: write
     
     steps:
-      - name: Get version
-        id: get_version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -307,26 +273,26 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create and push manifest for Docker Hub
+      - name: Create and push manifests
         run: |
+          # Docker Hub manifests
           docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64
           docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest
 
-          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-arm64
-          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ needs.version.outputs.version }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ needs.version.outputs.version }}-amd64 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ needs.version.outputs.version }}-arm64
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ needs.version.outputs.version }}
 
-      - name: Create and push manifest for GitHub Container Registry
-        run: |
+          # GitHub Container Registry manifests
           docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:latest \
             ghcr.io/${{ github.repository_owner }}/copilot:latest-amd64 \
             ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64
           docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:latest
 
-          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }} \
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-arm64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}
+          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:${{ needs.version.outputs.version }} \
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ needs.version.outputs.version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ needs.version.outputs.version }}-arm64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:${{ needs.version.outputs.version }}
