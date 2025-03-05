@@ -285,14 +285,15 @@ jobs:
         run: |
           mkdir -p docker
           cp build/${{ matrix.artifact }}/${{ matrix.binary_name }} docker/Copilot
-          cat > docker/Dockerfile << 'EOF'
-FROM ubuntu:22.04
-WORKDIR /app
-COPY Copilot .
-RUN chmod +x Copilot
-EXPOSE 80
-ENTRYPOINT ["./Copilot", "80"]
-EOF
+          echo "FROM ubuntu:22.04" > docker/Dockerfile
+          echo "WORKDIR /app" >> docker/Dockerfile
+          echo "COPY Copilot ." >> docker/Dockerfile
+          echo "RUN chmod +x Copilot" >> docker/Dockerfile
+          echo "EXPOSE 80" >> docker/Dockerfile
+          echo 'ENTRYPOINT ["./Copilot", "80"]' >> docker/Dockerfile
+
+
+
 
       - name: Prepare Dockerfile for JAR
         if: matrix.is_jar == true
@@ -300,12 +301,13 @@ EOF
           mkdir -p docker
           cp build/${{ matrix.artifact }}/Copilot-api-with-dependencies.jar docker/app.jar
           cat > docker/Dockerfile << 'EOF'
-FROM eclipse-temurin:17-jre
-WORKDIR /app
-COPY app.jar .
-EXPOSE 80
-ENTRYPOINT ["java", "-jar", "app.jar", "80"]
-EOF
+          FROM eclipse-temurin:17-jre
+          WORKDIR /app
+          COPY app.jar .
+          EXPOSE 80
+          ENTRYPOINT ["java", "-jar", "app.jar", "80"]
+          EOF
+
 
       - name: Build and push
         uses: docker/build-push-action@v5
