@@ -40,6 +40,16 @@ jobs:
     - name: Build with Maven
       run: mvn -B clean package assembly:single --file pom.xml
 
+    # 上传 Maven 构建产物
+    - name: Upload Maven Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: maven-build-${{ matrix.os }}
+        path: |
+          target/*.jar
+          !target/original-*.jar
+        retention-days: 5
+
     - name: Prepare for Native Image
       shell: bash
       run: |
@@ -79,19 +89,19 @@ jobs:
           --initialize-at-build-time=EmbeddingHandler ^
           --initialize-at-build-time=HeadersInfo 
 
-    - name: Upload Windows Build
+    - name: Upload Windows Native Image
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: copilot-api-windows
+        name: native-image-windows
         path: target/native-image/copilot2api.exe
         retention-days: 5
 
-    - name: Upload Linux Build
+    - name: Upload Linux Native Image
       if: matrix.os == 'ubuntu-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: copilot-api-linux
+        name: native-image-linux
         path: target/native-image/copilot2api
         retention-days: 5
 
@@ -105,4 +115,3 @@ jobs:
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
