@@ -1,168 +1,171 @@
-name: GraalVM Native Image Build
+name: Release and Docker
 
 on:
-  push:
-    branches: [ "main" ]
-    paths-ignore:
-      - 'go/**'
-      - '**.md'
-  pull_request:
-    branches: [ "main" ]
-    paths-ignore:
-      - 'go/**'
-      - '**.md'
+  workflow_run:
+    workflows: ["GraalVM Native Image Build"]
+    types:
+      - completed
+    branches:
+      - main
 
 jobs:
-  build:
-    runs-on: ${{ matrix.os }}
+  prepare-release:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-build"
+          merge-multiple: true
+          path: artifacts
+
+      - name: Download JAR files
+        uses: actions/download-artifact@v4
+        with:
+          name: jar-files
+          path: artifacts/jar
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ steps.get_version.outputs.version }}
+          name: Release ${{ steps.get_version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            artifacts/Copilot-api
+            artifacts/Copilot-api.exe
+            artifacts/jar/*.jar
+          generate_release_notes: true
+
+  docker:
+    needs: prepare-release
+    runs-on: ubuntu-latest
     strategy:
       matrix:
+        platform: [linux/amd64, linux/arm64]
         include:
-          - os: ubuntu-latest
-            arch: amd64
-            label: linux-amd64
-            static: true
-          - os: ubuntu-latest
-            arch: arm64
-            label: linux-arm64
-            static: true
-          - os: windows-latest
-            arch: amd64
-            label: windows
-            static: true
-          - os: macos-latest
-            arch: amd64
-            label: macos-x64
-            static: false
-          - os: macos-14
-            arch: arm64
-            label: macos-arm64
-            static: false
+          - platform: linux/amd64
+            artifact: linux-amd64-build
+          - platform: linux/arm64
+            artifact: linux-arm64-build
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup GraalVM
-      uses: graalvm/setup-graalvm@v1
-      with:
-        java-version: '17'
-        distribution: 'graalvm'
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        native-image-job-reports: 'true'
-        architecture: ${{ matrix.arch }}
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build
 
-    - name: Cache Maven packages
-      uses: actions/cache@v3
-      with:
-        path: ~/.m2
-        key: ${{ runner.os }}-${{ matrix.arch }}-m2-${{ hashFiles('**/pom.xml') }}
-        restore-keys: ${{ runner.os }}-${{ matrix.arch }}-m2
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Build with Maven
-      run: mvn -B clean package assembly:single --file pom.xml
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Rename JAR file
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
-      shell: bash
-      run: |
-        mkdir -p dist
-        cp target/*-jar-with-dependencies.jar dist/Copilot-api.jar
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    - name: Upload JAR
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
-      uses: actions/upload-artifact@v4
-      with:
-        name: jar-build
-        path: dist/Copilot-api.jar
-        retention-days: 5
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Prepare for Native Image
-      shell: bash
-      run: |
-        mkdir -p target/native-image
-        if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
-          cp dist/Copilot-api.jar target/native-image/
-        else
-          cp target/*-jar-with-dependencies.jar target/native-image/Copilot-api.jar
-        fi
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Build Native Image (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: cmd
-      run: |
-        cd target\native-image
-        native-image.cmd ^
-        -H:+AddAllCharsets ^
-        -jar Copilot-api.jar ^
-        -H:Name=Copilot-api ^
-        --enable-https ^
-        --enable-http ^
-        --static ^
-        --no-fallback ^
-        --initialize-at-build-time=Main ^
-        --initialize-at-build-time=CompletionHandler ^
-        --initialize-at-build-time=EmbeddingHandler ^
-        --initialize-at-build-time=HeadersInfo
+      - name: Prepare Dockerfile
+        run: |
+          mkdir -p docker
+          cp build/Copilot-api docker/Copilot
+          cat > docker/Dockerfile << 'EOF'
+          FROM ubuntu:22.04
+          WORKDIR /app
+          COPY Copilot .
+          RUN chmod +x Copilot
+          EXPOSE 80
+          ENTRYPOINT ["./Copilot", "80"]
+          EOF
 
-    - name: Build Native Image (Linux)
-      if: startsWith(matrix.os, 'ubuntu')
-      shell: bash
-      run: |
-        cd target/native-image
-        native-image \
-          -H:+AddAllCharsets \
-          -jar Copilot-api.jar \
-          -H:Name=Copilot-api \
-          --enable-https \
-          --enable-http \
-          --static \
-          --no-fallback \
-          --initialize-at-build-time=Main \
-          --initialize-at-build-time=CompletionHandler \
-          --initialize-at-build-time=EmbeddingHandler \
-          --initialize-at-build-time=HeadersInfo
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: docker
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+            ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
 
-    - name: Build Native Image (macOS)
-      if: startsWith(matrix.os, 'macos')
-      shell: bash
-      run: |
-        cd target/native-image
-        native-image \
-          -H:+AddAllCharsets \
-          -jar Copilot-api.jar \
-          -H:Name=Copilot-api \
-          --enable-https \
-          --enable-http \
-          --no-fallback \
-          --initialize-at-build-time=Main \
-          --initialize-at-build-time=CompletionHandler \
-          --initialize-at-build-time=EmbeddingHandler \
-          --initialize-at-build-time=HeadersInfo
+  docker-manifest:
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get version
+        id: get_version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-    - name: Upload Build Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.label }}-build
-        path: |
-          target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-        retention-days: 5
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          dist/Copilot-api.jar
-          target/native-image/Copilot-api
-        generate_release_notes: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Upload Release Assets
-      if: startsWith(github.ref, 'refs/tags/') && (matrix.os != 'ubuntu-latest' || matrix.arch != 'amd64')
-      uses: softprops/action-gh-release@v1
-      with:
-        files: |
-          target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create and push manifest for Docker Hub
+        run: |
+          # Latest manifest
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest
+
+          # Version manifest
+          docker manifest create ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }} \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-amd64 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}-arm64
+          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.get_version.outputs.version }}
+
+      - name: Create and push manifest for GitHub Container Registry
+        run: |
+          # Latest manifest
+          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:latest \
+            ghcr.io/${{ github.repository_owner }}/copilot:latest-amd64 \
+            ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:latest
+
+          # Version manifest
+          docker manifest create ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }} \
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-amd64 \
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}-arm64
+          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.get_version.outputs.version }}
