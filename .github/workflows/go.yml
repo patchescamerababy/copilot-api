@@ -15,7 +15,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
-        go-version: ['1.21'] # 注意：目前Go 1.23还未发布，使用最新的稳定版1.21
+        go-version: ['1.23']
 
     steps:
     - uses: actions/checkout@v4
