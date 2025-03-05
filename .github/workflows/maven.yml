@@ -1,18 +1,177 @@
-name: Release and Docker
+name: Build and Release
 
 on:
-  workflow_run:
-    workflows: ["GraalVM Native Image Build"]
-    types:
-      - completed
-    branches:
-      - main
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'src/**'
+      - 'pom.xml'
+      - '.github/workflows/**'
 
 jobs:
-  prepare-release:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            label: linux-amd64
+            static: true
+          - os: ubuntu-latest
+            arch: arm64
+            label: linux-arm64
+            static: true
+          - os: windows-latest
+            arch: amd64
+            label: windows
+            static: true
+          - os: macos-latest
+            arch: amd64
+            label: macos-x64
+            static: false
+          - os: macos-14
+            arch: arm64
+            label: macos-arm64
+            static: false
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Get version
+      id: get_version
+      shell: bash
+      run: |
+        VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Setup GraalVM
+      uses: graalvm/setup-graalvm@v1
+      with:
+        java-version: '17'
+        distribution: 'graalvm'
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        native-image-job-reports: 'true'
+        architecture: ${{ matrix.arch }}
+
+    - name: Cache Maven packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-${{ matrix.arch }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-${{ matrix.arch }}-m2
+
+    - name: Build with Maven
+      run: mvn -B clean package assembly:single --file pom.xml
+
+    - name: Prepare Artifacts Directory
+      shell: bash
+      run: mkdir -p dist
+
+    - name: Copy JAR files
+      shell: bash
+      run: |
+        # Copy the regular JAR
+        cp target/*[^s].jar dist/Copilot-api-original.jar
+        # Copy the JAR with dependencies
+        cp target/*-with-dependencies.jar dist/Copilot-api-with-dependencies.jar
+        # Copy the sources JAR if it exists
+        cp target/*-sources.jar dist/Copilot-api-sources.jar || true
+        # Copy the javadoc JAR if it exists
+        cp target/*-javadoc.jar dist/Copilot-api-javadoc.jar || true
+
+    - name: Upload JAR Artifacts
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
+      uses: actions/upload-artifact@v4
+      with:
+        name: jar-files
+        path: |
+          dist/Copilot-api-original.jar
+          dist/Copilot-api-with-dependencies.jar
+          dist/Copilot-api-sources.jar
+          dist/Copilot-api-javadoc.jar
+        retention-days: 5
+
+    - name: Prepare for Native Image
+      shell: bash
+      run: |
+        mkdir -p target/native-image
+        cp dist/Copilot-api-with-dependencies.jar target/native-image/Copilot-api.jar
+
+    - name: Build Native Image (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      run: |
+        cd target\native-image
+        native-image.cmd ^
+        -H:+AddAllCharsets ^
+        -jar Copilot-api.jar ^
+        -H:Name=Copilot-api ^
+        --enable-https ^
+        --enable-http ^
+        --static ^
+        --no-fallback ^
+        --initialize-at-build-time=Main ^
+        --initialize-at-build-time=CompletionHandler ^
+        --initialize-at-build-time=EmbeddingHandler ^
+        --initialize-at-build-time=HeadersInfo
+
+    - name: Build Native Image (Linux)
+      if: startsWith(matrix.os, 'ubuntu')
+      shell: bash
+      run: |
+        cd target/native-image
+        native-image \
+          -H:+AddAllCharsets \
+          -jar Copilot-api.jar \
+          -H:Name=Copilot-api \
+          --enable-https \
+          --enable-http \
+          --static \
+          --no-fallback \
+          --initialize-at-build-time=Main \
+          --initialize-at-build-time=CompletionHandler \
+          --initialize-at-build-time=EmbeddingHandler \
+          --initialize-at-build-time=HeadersInfo
+
+    - name: Build Native Image (macOS)
+      if: startsWith(matrix.os, 'macos')
+      shell: bash
+      run: |
+        cd target/native-image
+        native-image \
+          -H:+AddAllCharsets \
+          -jar Copilot-api.jar \
+          -H:Name=Copilot-api \
+          --enable-https \
+          --enable-http \
+          --no-fallback \
+          --initialize-at-build-time=Main \
+          --initialize-at-build-time=CompletionHandler \
+          --initialize-at-build-time=EmbeddingHandler \
+          --initialize-at-build-time=HeadersInfo
+
+    - name: Upload Native Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.label }}-build
+        path: |
+          target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+        retention-days: 5
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Get version
         id: get_version
         run: |
@@ -49,7 +208,7 @@ jobs:
           generate_release_notes: true
 
   docker:
-    needs: prepare-release
+    needs: release
     runs-on: ubuntu-latest
     strategy:
       matrix:
