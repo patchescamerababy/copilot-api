@@ -108,7 +108,6 @@ jobs:
           path: "${{ format('target/native-image/Java-Copilot-{}{}', matrix.label, matrix.os == 'windows-latest' ? '.exe' : '') }}"
           retention-days: 5
 
-
       - name: Upload JARs
         if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
         uses: actions/upload-artifact@v4
@@ -292,22 +291,16 @@ jobs:
           echo "EXPOSE 80" >> docker/Dockerfile
           echo 'ENTRYPOINT ["./Copilot", "80"]' >> docker/Dockerfile
 
-
-
-
       - name: Prepare Dockerfile for JAR
         if: matrix.is_jar == true
         run: |
           mkdir -p docker
           cp build/${{ matrix.artifact }}/Copilot-api-with-dependencies.jar docker/app.jar
-          cat > docker/Dockerfile << 'EOF'
-          FROM eclipse-temurin:17-jre
-          WORKDIR /app
-          COPY app.jar .
-          EXPOSE 80
-          ENTRYPOINT ["java", "-jar", "app.jar", "80"]
-          EOF
-
+          echo "FROM eclipse-temurin:17-jre" > docker/Dockerfile
+          echo "WORKDIR /app" >> docker/Dockerfile
+          echo "COPY app.jar ." >> docker/Dockerfile
+          echo "EXPOSE 80" >> docker/Dockerfile
+          echo 'ENTRYPOINT ["java", "-jar", "app.jar", "80"]' >> docker/Dockerfile
 
       - name: Build and push
         uses: docker/build-push-action@v5
