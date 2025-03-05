@@ -105,8 +105,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: java-${{ matrix.label }}
-          path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' ? '.exe' : '' }}
+          path: "${{ format('target/native-image/Java-Copilot-{}{}', matrix.label, matrix.os == 'windows-latest' ? '.exe' : '') }}"
           retention-days: 5
+
 
       - name: Upload JARs
         if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
