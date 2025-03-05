@@ -17,7 +17,22 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+            label: linux-amd64
+          - os: ubuntu-latest
+            arch: arm64
+            label: linux-arm64
+          - os: windows-latest
+            arch: amd64
+            label: windows
+          - os: macos-latest
+            arch: amd64
+            label: macos-x64
+          - os: macos-14
+            arch: arm64
+            label: macos-arm64
 
     steps:
     - uses: actions/checkout@v4
@@ -29,25 +44,26 @@ jobs:
         distribution: 'graalvm'
         github-token: ${{ secrets.GITHUB_TOKEN }}
         native-image-job-reports: 'true'
+        architecture: ${{ matrix.arch }}
 
     - name: Cache Maven packages
       uses: actions/cache@v3
       with:
         path: ~/.m2
-        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-        restore-keys: ${{ runner.os }}-m2
+        key: ${{ runner.os }}-${{ matrix.arch }}-m2-${{ hashFiles('**/pom.xml') }}
+        restore-keys: ${{ runner.os }}-${{ matrix.arch }}-m2
 
     - name: Build with Maven
       run: mvn -B clean package assembly:single --file pom.xml
 
     - name: Rename JAR file
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
       run: |
         mkdir -p dist
         cp target/*-jar-with-dependencies.jar dist/Copilot-api.jar
 
     - name: Upload JAR
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
       uses: actions/upload-artifact@v4
       with:
         name: jar-build
@@ -58,67 +74,68 @@ jobs:
       shell: bash
       run: |
         mkdir -p target/native-image
-        cp dist/Copilot-api.jar target/native-image/
+        if [ "${{ matrix.os }}" = "ubuntu-latest" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
+          cp dist/Copilot-api.jar target/native-image/
+        else
+          cp target/*-jar-with-dependencies.jar target/native-image/Copilot-api.jar
+        fi
 
-    - name: Build Native Image (Linux)
-      if: matrix.os == 'ubuntu-latest'
+    - name: Build Native Image
+      shell: bash
       run: |
         cd target/native-image
-        native-image \
-          -H:+AddAllCharsets \
-          -jar Copilot-api.jar \
-          -H:Name=Copilot-api \
-          --enable-https \
-          --enable-http \
-          --static \
-          --no-fallback \
-          --initialize-at-build-time=Main \
-          --initialize-at-build-time=CompletionHandler \
-          --initialize-at-build-time=EmbeddingHandler \
-          --initialize-at-build-time=HeadersInfo 
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          native-image \
+            -H:+AddAllCharsets \
+            -jar Copilot-api.jar \
+            -H:Name=Copilot-api \
+            --enable-https \
+            --enable-http \
+            --static \
+            --no-fallback \
+            --initialize-at-build-time=Main \
+            --initialize-at-build-time=CompletionHandler \
+            --initialize-at-build-time=EmbeddingHandler \
+            --initialize-at-build-time=HeadersInfo
+        else
+          native-image \
+            -H:+AddAllCharsets \
+            -jar Copilot-api.jar \
+            -H:Name=Copilot-api \
+            --enable-https \
+            --enable-http \
+            --static \
+            --no-fallback \
+            --initialize-at-build-time=Main \
+            --initialize-at-build-time=CompletionHandler \
+            --initialize-at-build-time=EmbeddingHandler \
+            --initialize-at-build-time=HeadersInfo
+        fi
 
-    - name: Build Native Image (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: cmd
-      run: |
-        cd target\native-image
-        native-image ^
-          -H:+AddAllCharsets ^
-          -jar Copilot-api.jar ^
-          -H:Name=Copilot-api ^
-          --enable-https ^
-          --enable-http ^
-          --static ^
-          --no-fallback ^
-          --initialize-at-build-time=Main ^
-          --initialize-at-build-time=CompletionHandler ^
-          --initialize-at-build-time=EmbeddingHandler ^
-          --initialize-at-build-time=HeadersInfo 
-
-    - name: Upload Windows Build
-      if: matrix.os == 'windows-latest'
+    - name: Upload Build Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: windows-build
-        path: target/native-image/Copilot-api.exe
-        retention-days: 5
-
-    - name: Upload Linux Build
-      if: matrix.os == 'ubuntu-latest'
-      uses: actions/upload-artifact@v4
-      with:
-        name: linux-build
-        path: target/native-image/Copilot-api
+        name: ${{ matrix.label }}-build
+        path: |
+          target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
 
     - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest'
+      if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
       uses: softprops/action-gh-release@v1
       with:
         files: |
           dist/Copilot-api.jar
           target/native-image/Copilot-api
-          target/native-image/Copilot-api.exe
         generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload Release Assets
+      if: startsWith(github.ref, 'refs/tags/') && (matrix.os != 'ubuntu-latest' || matrix.arch != 'amd64')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          target/native-image/Copilot-api${{ matrix.os == 'windows-latest' && '.exe' || '' }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
