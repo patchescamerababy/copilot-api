@@ -10,9 +10,10 @@ public class HeadersInfo {
     private static final String uuid = UUID.randomUUID() + String.valueOf((long)(Math.random() * 1e13));
     private static final String vscode_machineid = generateRandomHex(64);
     public static final String openai_organization = "github-copilot";
-    public static final String editor_version = "vscode/1.96.1";
-    public static final String editor_plugin_version = "copilot-chat/0.23.2";
-    public static final String x_github_api_version = "2024-12-15";
+    public static final String editor_version = "vscode/1.98.0-insider";
+    public static final String editor_plugin_version = "copilot/1.270.0";
+    public static final String copilot_language_server_version = "1.270.0";
+    public static final String x_github_api_version = "2025-01-21";
     public static final String content_type = "application/json";
     public static final String user_agent = "GitHubCopilotChat/0.23.2";
 
@@ -23,18 +24,18 @@ public class HeadersInfo {
         Map<String, String> headers = new HashMap<>();
         headers.put("Content-Type", content_type);
         headers.put("Connection", "keep-alive");
-        headers.put("Editor-Plugin-Version", HeadersInfo.editor_plugin_version);
-        headers.put("Editor-Version", HeadersInfo.editor_version);
-        headers.put("Openai-Organization", "github-copilot");
-        headers.put("User-Agent", HeadersInfo.user_agent);
-        headers.put("VScode-MachineId", HeadersInfo.vscode_machineid);
-        headers.put("VScode-SessionId", HeadersInfo.uuid);
+        headers.put("Editor-Plugin-Version", editor_plugin_version);
+        headers.put("Editor-Version", editor_version);
+        headers.put("Openai-Organization", openai_organization);
+        headers.put("User-Agent", user_agent);
+        headers.put("VScode-MachineId", vscode_machineid);
+        headers.put("VScode-SessionId", uuid);
         headers.put("accept", "*/*");
         headers.put("Sec-Fetch-Site", "none");
         headers.put("Sec-Fetch-Mode", "no-cors");
         headers.put("Sec-Fetch-Dest", "empty");
         headers.put("accept-encoding", "gzip, deflate, br, zstd");
-        headers.put("X-GitHub-Api-Version", HeadersInfo.x_github_api_version);
+        headers.put("X-GitHub-Api-Version", x_github_api_version);
         headers.put("X-Request-Id", RandomXRequestID(32));
         return headers;
     }
