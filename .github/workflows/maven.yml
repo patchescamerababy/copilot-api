@@ -40,21 +40,25 @@ jobs:
     - name: Build with Maven
       run: mvn -B clean package assembly:single --file pom.xml
 
-    # 上传 Maven 构建产物
-    - name: Upload Maven Build Artifacts
+    - name: Rename JAR file
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        mkdir -p dist
+        cp target/*-jar-with-dependencies.jar dist/Copilot-api.jar
+
+    - name: Upload JAR
+      if: matrix.os == 'ubuntu-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: maven-build-${{ matrix.os }}
-        path: |
-          target/*.jar
-          !target/original-*.jar
+        name: jar-build
+        path: dist/Copilot-api.jar
         retention-days: 5
 
     - name: Prepare for Native Image
       shell: bash
       run: |
         mkdir -p target/native-image
-        cp target/Copilot2API-*-jar-with-dependencies.jar target/native-image/Copilot2API.jar
+        cp dist/Copilot-api.jar target/native-image/
 
     - name: Build Native Image (Linux)
       if: matrix.os == 'ubuntu-latest'
@@ -62,7 +66,8 @@ jobs:
         cd target/native-image
         native-image \
           -H:+AddAllCharsets \
-          -jar Copilot2API.jar \
+          -jar Copilot-api.jar \
+          -H:Name=Copilot-api \
           --enable-https \
           --enable-http \
           --static \
@@ -79,7 +84,8 @@ jobs:
         cd target\native-image
         native-image ^
           -H:+AddAllCharsets ^
-          -jar Copilot2API.jar ^
+          -jar Copilot-api.jar ^
+          -H:Name=Copilot-api ^
           --enable-https ^
           --enable-http ^
           --static ^
@@ -89,20 +95,20 @@ jobs:
           --initialize-at-build-time=EmbeddingHandler ^
           --initialize-at-build-time=HeadersInfo 
 
-    - name: Upload Windows Native Image
+    - name: Upload Windows Build
       if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: native-image-windows
-        path: target/native-image/copilot2api.exe
+        name: windows-build
+        path: target/native-image/Copilot-api.exe
         retention-days: 5
 
-    - name: Upload Linux Native Image
+    - name: Upload Linux Build
       if: matrix.os == 'ubuntu-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: native-image-linux
-        path: target/native-image/copilot2api
+        name: linux-build
+        path: target/native-image/Copilot-api
         retention-days: 5
 
     - name: Create Release
@@ -110,8 +116,9 @@ jobs:
       uses: softprops/action-gh-release@v1
       with:
         files: |
-          target/native-image/copilot2api
-          target/Copilot2API-*-jar-with-dependencies.jar
+          dist/Copilot-api.jar
+          target/native-image/Copilot-api
+          target/native-image/Copilot-api.exe
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
