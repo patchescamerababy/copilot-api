@@ -1,8 +1,6 @@
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -18,10 +16,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
+
 public class EmbeddingHandler implements HttpHandler {
     public static final String COPILOT_CHAT_EMBEDDINGS_URL = "https://api.individual.githubcopilot.com/embeddings";
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
-    private static final Logger logger = LogManager.getLogger(EmbeddingHandler.class);
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -71,18 +69,18 @@ public class EmbeddingHandler implements HttpHandler {
                 handleEmbeddingRequest(exchange, requestJson, receivedToken);
 
             } catch (JSONException e) {
-                logger.error(e.getMessage());
+                e.printStackTrace();
                 try {
                     sendErrorResponse(exchange, 400, "Invalid JSON format");
                 } catch (IOException ioException) {
-                    logger.error(ioException.getMessage());
+                    ioException.printStackTrace();
                 }
             } catch (Exception e) {
-                logger.error(e.getMessage());
+                e.printStackTrace();
                 try {
                     sendErrorResponse(exchange, 500, "Internal server error");
                 } catch (IOException ioException) {
-                    logger.error(ioException.getMessage());
+                    ioException.printStackTrace();
                 }
             }
         });
