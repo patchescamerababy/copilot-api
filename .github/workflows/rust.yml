@@ -1,0 +1,127 @@
+name: Rust Build
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'rust/**'
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - 'rust/**'
+
+env:
+  CARGO_TERM_COLOR: always
+  BINARY_NAME: Get-token # 对应 package.name
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: get-token-linux-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: get-token-windows-x64.exe
+
+    defaults:
+      run:
+        working-directory: ./rust
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
+        profile: minimal
+
+    # Windows 特定依赖安装
+    - name: Install Windows dependencies
+      if: matrix.os == 'windows-latest'
+      run: |
+        vcpkg integrate install
+
+    # Linux 特定依赖安装
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
+
+    - name: Build
+      run: cargo build --verbose --release --target ${{ matrix.target }}
+
+    - name: Run tests
+      run: cargo test --verbose --target ${{ matrix.target }}
+
+    # 重命名和打包构建产物
+    - name: Prepare artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        Copy-Item "target/${{ matrix.target }}/release/Get-token.exe" "${{ matrix.artifact_name }}"
+        7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
+
+    - name: Prepare artifacts (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        cp target/${{ matrix.target }}/release/Get-token ${{ matrix.artifact_name }}
+        tar -czf ${{ matrix.artifact_name }}.tar.gz ${{ matrix.artifact_name }}
+        
+    # 上传构建产物
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: |
+          ./rust/${{ matrix.artifact_name }}.*
+        if-no-files-found: error
+
+  # 创建 Release
+  release:
+    name: Create Release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          **/get-token-*
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # 将最新版本的构建产物保存到特定分支
+    - name: Checkout artifacts branch
+      uses: actions/checkout@v4
+      with:
+        ref: artifacts
+        fetch-depth: 0
+
+    - name: Update artifacts branch
+      run: |
+        # 清理旧文件
+        git rm -rf . || true
+        # 复制新构建的文件
+        cp -r ../get-token-* .
+        # 提交更改
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add .
+        git commit -m "Update artifacts for ${{ github.ref_name }}" || echo "No changes to commit"
+        git push origin artifacts
+
