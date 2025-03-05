@@ -3,15 +3,21 @@ name: GraalVM Native Image Build
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - 'go/**'
+      - '**.md'
   pull_request:
     branches: [ "main" ]
-
-permissions:
-  contents: write
+    paths-ignore:
+      - 'go/**'
+      - '**.md'
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
 
     steps:
     - uses: actions/checkout@v4
@@ -35,11 +41,13 @@ jobs:
       run: mvn -B clean package assembly:single --file pom.xml
 
     - name: Prepare for Native Image
+      shell: bash
       run: |
         mkdir -p target/native-image
         cp target/Copilot2API-*-jar-with-dependencies.jar target/native-image/Copilot2API.jar
 
-    - name: Build Native Image
+    - name: Build Native Image (Linux)
+      if: matrix.os == 'ubuntu-latest'
       run: |
         cd target/native-image
         native-image \
@@ -53,16 +61,42 @@ jobs:
           --initialize-at-build-time=CompletionHandler \
           --initialize-at-build-time=EmbeddingHandler \
           --initialize-at-build-time=HeadersInfo 
-    - name: Upload Native Image
+
+    - name: Build Native Image (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      run: |
+        cd target\native-image
+        native-image ^
+          -H:+AddAllCharsets ^
+          -jar Copilot2API.jar ^
+          --enable-https ^
+          --enable-http ^
+          --static ^
+          --no-fallback ^
+          --initialize-at-build-time=Main ^
+          --initialize-at-build-time=CompletionHandler ^
+          --initialize-at-build-time=EmbeddingHandler ^
+          --initialize-at-build-time=HeadersInfo 
+
+    - name: Upload Windows Build
+      if: matrix.os == 'windows-latest'
       uses: actions/upload-artifact@v4
       with:
-        name: copilot-api-native
+        name: copilot-api-windows
+        path: target/native-image/copilot2api.exe
+        retention-days: 5
+
+    - name: Upload Linux Build
+      if: matrix.os == 'ubuntu-latest'
+      uses: actions/upload-artifact@v4
+      with:
+        name: copilot-api-linux
         path: target/native-image/copilot2api
         retention-days: 5
 
-    # 创建 Release（当推送标签时）
     - name: Create Release
-      if: startsWith(github.ref, 'refs/tags/')
+      if: startsWith(github.ref, 'refs/tags/') && matrix.os == 'ubuntu-latest'
       uses: softprops/action-gh-release@v1
       with:
         files: |
@@ -71,3 +105,4 @@ jobs:
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
