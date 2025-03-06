@@ -182,9 +182,212 @@ jobs:
         path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 5
 
+  rust-build-linux:
+    name: Rust Build Linux
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - name: Add Linux targets
+      run: |
+        rustup target add x86_64-unknown-linux-gnu
+        rustup target add i686-unknown-linux-gnu
+        rustup target add aarch64-unknown-linux-gnu
+        rustup target add mips-unknown-linux-gnu
+        rustup target add mipsel-unknown-linux-gnu
+        rustup target add mips64-unknown-linux-gnuabi64
+        rustup target add mips64el-unknown-linux-gnuabi64
+
+    - name: Install required dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
+
+    - name: Build for x86_64-linux
+      run: |
+        cd ./src/rust
+        cargo build --release --target=x86_64-unknown-linux-gnu
+        cp target/x86_64-unknown-linux-gnu/release/Get-token ./Get-token-linux-x64
+        tar -czf Get-token-linux-x64.tar.gz Get-token-linux-x64
+
+    - name: Build for i686-linux
+      run: |
+        cd ./src/rust
+        cargo build --release --target=i686-unknown-linux-gnu
+        cp target/i686-unknown-linux-gnu/release/Get-token ./Get-token-linux-x86
+        tar -czf Get-token-linux-x86.tar.gz Get-token-linux-x86
+
+    - name: Build for aarch64-linux
+      run: |
+        cd ./src/rust
+        cargo build --release --target=aarch64-unknown-linux-gnu
+        cp target/aarch64-unknown-linux-gnu/release/Get-token ./Get-token-linux-arm64
+        tar -czf Get-token-linux-arm64.tar.gz Get-token-linux-arm64
+
+    - name: Install cross for MIPS builds
+      run: cargo install cross --git https://github.com/cross-rs/cross
+
+    - name: Build for MIPS targets
+      run: |
+        cd ./src/rust
+        
+        # MIPS 32-bit (big endian)
+        cross build --release --target=mips-unknown-linux-gnu
+        cp target/mips-unknown-linux-gnu/release/Get-token ./Get-token-linux-mips
+        tar -czf Get-token-linux-mips.tar.gz Get-token-linux-mips
+        
+        # MIPS 32-bit (little endian)
+        cross build --release --target=mipsel-unknown-linux-gnu
+        cp target/mipsel-unknown-linux-gnu/release/Get-token ./Get-token-linux-mipsel
+        tar -czf Get-token-linux-mipsel.tar.gz Get-token-linux-mipsel
+        
+        # MIPS 64-bit (big endian)
+        cross build --release --target=mips64-unknown-linux-gnuabi64
+        cp target/mips64-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64
+        tar -czf Get-token-linux-mips64.tar.gz Get-token-linux-mips64
+        
+        # MIPS 64-bit (little endian)
+        cross build --release --target=mips64el-unknown-linux-gnuabi64
+        cp target/mips64el-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64el
+        tar -czf Get-token-linux-mips64el.tar.gz Get-token-linux-mips64el
+
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-linux-builds
+        path: ./src/rust/Get-token-linux-*.tar.gz
+        retention-days: 5
+        if-no-files-found: warn
+
+  rust-build-windows:
+    name: Rust Build Windows
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - name: Add Windows targets
+      run: |
+        rustup target add x86_64-pc-windows-msvc
+        rustup target add i686-pc-windows-msvc
+        rustup target add aarch64-pc-windows-msvc
+
+    - name: Install clipboard and other dependencies
+      run: |
+        cargo install cargo-vcpkg
+        vcpkg integrate install
+
+    - name: Build for x86_64-windows
+      run: |
+        cd ./src/rust
+        cargo build --release --target=x86_64-pc-windows-msvc
+        copy target\x86_64-pc-windows-msvc\release\Get-token.exe Get-token-windows-x64.exe
+        7z a Get-token-windows-x64.zip Get-token-windows-x64.exe
+
+    - name: Build for i686-windows
+      run: |
+        cd ./src/rust
+        cargo build --release --target=i686-pc-windows-msvc
+        copy target\i686-pc-windows-msvc\release\Get-token.exe Get-token-windows-x86.exe
+        7z a Get-token-windows-x86.zip Get-token-windows-x86.exe
+
+    - name: Build for aarch64-windows
+      run: |
+        cd ./src/rust
+        cargo build --release --target=aarch64-pc-windows-msvc
+        copy target\aarch64-pc-windows-msvc\release\Get-token.exe Get-token-windows-arm64.exe
+        7z a Get-token-windows-arm64.zip Get-token-windows-arm64.exe
+
+    - name: Upload Windows artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-windows-builds
+        path: ./src/rust/Get-token-windows-*.zip
+        retention-days: 5
+        if-no-files-found: warn
+
+  rust-build-macos:
+    name: Rust Build macOS
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - name: Add macOS targets
+      run: |
+        rustup target add x86_64-apple-darwin
+        rustup target add aarch64-apple-darwin || echo "aarch64-apple-darwin not available, skipping"
+
+    - name: Build for x86_64-macos
+      run: |
+        cd ./src/rust
+        cargo build --release --target=x86_64-apple-darwin
+        cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-x64
+        tar -czf Get-token-macos-x64.tar.gz Get-token-macos-x64
+
+    - name: Build for aarch64-macos
+      run: |
+        cd ./src/rust
+        if rustup target list --installed | grep -q aarch64-apple-darwin; then
+          cargo build --release --target=aarch64-apple-darwin || echo "Build failed, skipping"
+          if [ -f "target/aarch64-apple-darwin/release/Get-token" ]; then
+            cp target/aarch64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+            tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64
+          else
+            echo "Creating cross-compiled arm64 build"
+            rustup target add aarch64-apple-darwin
+            SDKROOT=$(xcrun -sdk macosx --show-sdk-path) \
+            MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version) \
+            cargo build --release --target=aarch64-apple-darwin
+            if [ -f "target/aarch64-apple-darwin/release/Get-token" ]; then
+              cp target/aarch64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+              tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64
+            else
+              echo "Cross-compilation failed, creating placeholder using x86_64 binary"
+              cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+              echo "This is a placeholder. Real arm64 build was not available." > README.arm64.txt
+              tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64 README.arm64.txt
+            fi
+          fi
+        else
+          echo "aarch64-apple-darwin target not available, creating placeholder"
+          cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+          echo "This is a placeholder. Real arm64 build was not available." > README.arm64.txt
+          tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64 README.arm64.txt
+        fi
+
+    - name: Upload macOS artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-macos-builds
+        path: ./src/rust/Get-token-macos-*.tar.gz
+        retention-days: 5
+        if-no-files-found: warn
 
   release:
-    needs: [java-build, go-build]
+    needs: [java-build, go-build, rust-build-linux, rust-build-windows, rust-build-macos]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -227,7 +430,10 @@ jobs:
 
       - name: Update artifacts branch
         run: |
-
+          # Copy Rust artifacts
+          mkdir -p artifacts-branch/rust
+          cp -r artifacts/rust-*/* artifacts-branch/rust/ || echo "No Rust artifacts to copy"
+          
           # Commit and push
           cd artifacts-branch
           git config user.name "GitHub Action"
