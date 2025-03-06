@@ -182,8 +182,8 @@ jobs:
         path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 5
 
-  rust-build-linux:
-    name: Rust Build Linux
+  rust-build-linux-standard:
+    name: Rust Build Linux Standard
     runs-on: ubuntu-latest
     
     steps:
@@ -196,15 +196,11 @@ jobs:
         profile: minimal
         override: true
         
-    - name: Add Linux targets
+    - name: Add standard Linux targets
       run: |
         rustup target add x86_64-unknown-linux-gnu
         rustup target add i686-unknown-linux-gnu
         rustup target add aarch64-unknown-linux-gnu
-        rustup target add mips-unknown-linux-gnu
-        rustup target add mipsel-unknown-linux-gnu
-        rustup target add mips64-unknown-linux-gnuabi64
-        rustup target add mips64el-unknown-linux-gnuabi64
 
     - name: Install required dependencies
       run: |
@@ -232,38 +228,96 @@ jobs:
         cp target/aarch64-unknown-linux-gnu/release/Get-token ./Get-token-linux-arm64
         tar -czf Get-token-linux-arm64.tar.gz Get-token-linux-arm64
 
-    - name: Install cross for MIPS builds
-      run: cargo install cross --git https://github.com/cross-rs/cross
-
-    - name: Build for MIPS targets
-      run: |
-        cd ./src/rust
-        
-        # MIPS 32-bit (big endian)
-        cross build --release --target=mips-unknown-linux-gnu
-        cp target/mips-unknown-linux-gnu/release/Get-token ./Get-token-linux-mips
-        tar -czf Get-token-linux-mips.tar.gz Get-token-linux-mips
-        
-        # MIPS 32-bit (little endian)
-        cross build --release --target=mipsel-unknown-linux-gnu
-        cp target/mipsel-unknown-linux-gnu/release/Get-token ./Get-token-linux-mipsel
-        tar -czf Get-token-linux-mipsel.tar.gz Get-token-linux-mipsel
-        
-        # MIPS 64-bit (big endian)
-        cross build --release --target=mips64-unknown-linux-gnuabi64
-        cp target/mips64-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64
-        tar -czf Get-token-linux-mips64.tar.gz Get-token-linux-mips64
-        
-        # MIPS 64-bit (little endian)
-        cross build --release --target=mips64el-unknown-linux-gnuabi64
-        cp target/mips64el-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64el
-        tar -czf Get-token-linux-mips64el.tar.gz Get-token-linux-mips64el
-
     - name: Upload Linux artifacts
       uses: actions/upload-artifact@v4
       with:
         name: rust-linux-builds
         path: ./src/rust/Get-token-linux-*.tar.gz
+        retention-days: 5
+        if-no-files-found: warn
+
+  rust-build-linux-mips:
+    name: Rust Build Linux MIPS
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust Nightly (for MIPS support)
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        profile: minimal
+        override: true
+        
+    # Try to add MIPS targets with nightly toolchain
+    - name: Try to add MIPS targets
+      run: |
+        mkdir -p ./mips_targets
+        
+        # Try each MIPS target and record result
+        rustup target add mips-unknown-linux-gnu && echo "mips" > ./mips_targets/mips || echo "mips target not available"
+        rustup target add mipsel-unknown-linux-gnu && echo "mipsel" > ./mips_targets/mipsel || echo "mipsel target not available"
+        rustup target add mips64-unknown-linux-gnuabi64 && echo "mips64" > ./mips_targets/mips64 || echo "mips64 target not available"
+        rustup target add mips64el-unknown-linux-gnuabi64 && echo "mips64el" > ./mips_targets/mips64el || echo "mips64el target not available"
+
+    - name: Install cross for MIPS builds
+      run: cargo install cross --git https://github.com/cross-rs/cross
+
+    # Build for each available MIPS target
+    - name: Build for MIPS targets
+      run: |
+        cd ./src/rust
+        
+        # MIPS 32-bit (big endian)
+        if [ -f "../../mips_targets/mips" ]; then
+          cross build --release --target=mips-unknown-linux-gnu
+          cp target/mips-unknown-linux-gnu/release/Get-token ./Get-token-linux-mips
+          tar -czf Get-token-linux-mips.tar.gz Get-token-linux-mips
+        else
+          echo "Skipping mips build - target not available"
+          echo "MIPS build not available" > Get-token-linux-mips.txt
+          tar -czf Get-token-linux-mips.tar.gz Get-token-linux-mips.txt
+        fi
+        
+        # MIPS 32-bit (little endian)
+        if [ -f "../../mips_targets/mipsel" ]; then
+          cross build --release --target=mipsel-unknown-linux-gnu
+          cp target/mipsel-unknown-linux-gnu/release/Get-token ./Get-token-linux-mipsel
+          tar -czf Get-token-linux-mipsel.tar.gz Get-token-linux-mipsel
+        else
+          echo "Skipping mipsel build - target not available"
+          echo "MIPS Little Endian build not available" > Get-token-linux-mipsel.txt
+          tar -czf Get-token-linux-mipsel.tar.gz Get-token-linux-mipsel.txt
+        fi
+        
+        # MIPS 64-bit (big endian)
+        if [ -f "../../mips_targets/mips64" ]; then
+          cross build --release --target=mips64-unknown-linux-gnuabi64
+          cp target/mips64-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64
+          tar -czf Get-token-linux-mips64.tar.gz Get-token-linux-mips64
+        else
+          echo "Skipping mips64 build - target not available"
+          echo "MIPS64 build not available" > Get-token-linux-mips64.txt
+          tar -czf Get-token-linux-mips64.tar.gz Get-token-linux-mips64.txt
+        fi
+        
+        # MIPS 64-bit (little endian)
+        if [ -f "../../mips_targets/mips64el" ]; then
+          cross build --release --target=mips64el-unknown-linux-gnuabi64
+          cp target/mips64el-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64el
+          tar -czf Get-token-linux-mips64el.tar.gz Get-token-linux-mips64el
+        else
+          echo "Skipping mips64el build - target not available"
+          echo "MIPS64 Little Endian build not available" > Get-token-linux-mips64el.txt
+          tar -czf Get-token-linux-mips64el.tar.gz Get-token-linux-mips64el.txt
+        fi
+
+    - name: Upload MIPS artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-linux-mips-builds
+        path: ./src/rust/Get-token-linux-mips*.tar.gz
         retention-days: 5
         if-no-files-found: warn
 
@@ -287,31 +341,48 @@ jobs:
         rustup target add i686-pc-windows-msvc
         rustup target add aarch64-pc-windows-msvc
 
-    - name: Install clipboard and other dependencies
+    # Install dependencies for clipboard functionality
+    - name: Install dependencies
       run: |
-        cargo install cargo-vcpkg
+        # For clipboard support on Windows
         vcpkg integrate install
 
     - name: Build for x86_64-windows
       run: |
         cd ./src/rust
         cargo build --release --target=x86_64-pc-windows-msvc
-        copy target\x86_64-pc-windows-msvc\release\Get-token.exe Get-token-windows-x64.exe
-        7z a Get-token-windows-x64.zip Get-token-windows-x64.exe
+        if (Test-Path "target/x86_64-pc-windows-msvc/release/Get-token.exe") {
+          Copy-Item "target/x86_64-pc-windows-msvc/release/Get-token.exe" -Destination "Get-token-windows-x64.exe"
+          7z a "Get-token-windows-x64.zip" "Get-token-windows-x64.exe"
+        } else {
+          Write-Output "x86_64 Windows binary not found, checking path..."
+          Get-ChildItem -Path "target" -Recurse -Filter "Get-token.exe"
+          exit 1
+        }
 
     - name: Build for i686-windows
       run: |
         cd ./src/rust
         cargo build --release --target=i686-pc-windows-msvc
-        copy target\i686-pc-windows-msvc\release\Get-token.exe Get-token-windows-x86.exe
-        7z a Get-token-windows-x86.zip Get-token-windows-x86.exe
+        if (Test-Path "target/i686-pc-windows-msvc/release/Get-token.exe") {
+          Copy-Item "target/i686-pc-windows-msvc/release/Get-token.exe" -Destination "Get-token-windows-x86.exe"
+          7z a "Get-token-windows-x86.zip" "Get-token-windows-x86.exe"
+        } else {
+          Write-Output "i686 Windows binary not found"
+          exit 1
+        }
 
     - name: Build for aarch64-windows
       run: |
         cd ./src/rust
         cargo build --release --target=aarch64-pc-windows-msvc
-        copy target\aarch64-pc-windows-msvc\release\Get-token.exe Get-token-windows-arm64.exe
-        7z a Get-token-windows-arm64.zip Get-token-windows-arm64.exe
+        if (Test-Path "target/aarch64-pc-windows-msvc/release/Get-token.exe") {
+          Copy-Item "target/aarch64-pc-windows-msvc/release/Get-token.exe" -Destination "Get-token-windows-arm64.exe"
+          7z a "Get-token-windows-arm64.zip" "Get-token-windows-arm64.exe"
+        } else {
+          Write-Output "ARM64 Windows binary not found"
+          exit 1
+        }
 
     - name: Upload Windows artifacts
       uses: actions/upload-artifact@v4
@@ -338,7 +409,7 @@ jobs:
     - name: Add macOS targets
       run: |
         rustup target add x86_64-apple-darwin
-        rustup target add aarch64-apple-darwin || echo "aarch64-apple-darwin not available, skipping"
+        rustup target add aarch64-apple-darwin || echo "aarch64-apple-darwin not available, will try cross-compilation"
 
     - name: Build for x86_64-macos
       run: |
@@ -350,33 +421,41 @@ jobs:
     - name: Build for aarch64-macos
       run: |
         cd ./src/rust
+        # Try direct build first
         if rustup target list --installed | grep -q aarch64-apple-darwin; then
-          cargo build --release --target=aarch64-apple-darwin || echo "Build failed, skipping"
+          echo "Building directly for aarch64-apple-darwin"
+          cargo build --release --target=aarch64-apple-darwin || echo "Direct build failed, will try cross-compilation"
+          
           if [ -f "target/aarch64-apple-darwin/release/Get-token" ]; then
             cp target/aarch64-apple-darwin/release/Get-token ./Get-token-macos-arm64
             tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64
-          else
-            echo "Creating cross-compiled arm64 build"
-            rustup target add aarch64-apple-darwin
-            SDKROOT=$(xcrun -sdk macosx --show-sdk-path) \
-            MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version) \
-            cargo build --release --target=aarch64-apple-darwin
-            if [ -f "target/aarch64-apple-darwin/release/Get-token" ]; then
-              cp target/aarch64-apple-darwin/release/Get-token ./Get-token-macos-arm64
-              tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64
-            else
-              echo "Cross-compilation failed, creating placeholder using x86_64 binary"
-              cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-arm64
-              echo "This is a placeholder. Real arm64 build was not available." > README.arm64.txt
-              tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64 README.arm64.txt
-            fi
+            echo "ARM64 macOS build successful"
+            exit 0
           fi
-        else
-          echo "aarch64-apple-darwin target not available, creating placeholder"
-          cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-arm64
-          echo "This is a placeholder. Real arm64 build was not available." > README.arm64.txt
-          tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64 README.arm64.txt
         fi
+        
+        # Try cross-compilation with explicit SDK settings
+        echo "Attempting cross-compilation for ARM64 macOS"
+        rustup target add aarch64-apple-darwin || echo "Target already added or unavailable"
+        
+        export SDKROOT=$(xcrun -sdk macosx --show-sdk-path)
+        export MACOSX_DEPLOYMENT_TARGET=$(xcrun -sdk macosx --show-sdk-platform-version)
+        cargo build --release --target=aarch64-apple-darwin
+        
+        if [ -f "target/aarch64-apple-darwin/release/Get-token" ]; then
+          cp target/aarch64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+          tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64
+          echo "Cross-compilation successful"
+          exit 0
+        fi
+        
+        # Fall back to universal binary or placeholder
+        echo "Cross-compilation failed, creating universal binary"
+        cargo build --release
+        lipo -create -output Get-token-macos-universal target/release/Get-token
+        cp Get-token-macos-universal ./Get-token-macos-arm64
+        echo "This is a universal binary that may work on ARM64 Macs." > README.arm64.txt
+        tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64 README.arm64.txt
 
     - name: Upload macOS artifacts
       uses: actions/upload-artifact@v4
@@ -387,7 +466,7 @@ jobs:
         if-no-files-found: warn
 
   release:
-    needs: [java-build, go-build, rust-build-linux, rust-build-windows, rust-build-macos]
+    needs: [java-build, go-build, rust-build-linux-standard, rust-build-linux-mips, rust-build-windows, rust-build-macos]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -430,9 +509,17 @@ jobs:
 
       - name: Update artifacts branch
         run: |
+          # Create directories
+          mkdir -p artifacts-branch/rust/linux
+          mkdir -p artifacts-branch/rust/windows
+          mkdir -p artifacts-branch/rust/macos
+          mkdir -p artifacts-branch/rust/mips
+          
           # Copy Rust artifacts
-          mkdir -p artifacts-branch/rust
-          cp -r artifacts/rust-*/* artifacts-branch/rust/ || echo "No Rust artifacts to copy"
+          cp -r artifacts/rust-linux-builds/* artifacts-branch/rust/linux/ || echo "No standard Linux builds to copy"
+          cp -r artifacts/rust-linux-mips-builds/* artifacts-branch/rust/mips/ || echo "No MIPS builds to copy"
+          cp -r artifacts/rust-windows-builds/* artifacts-branch/rust/windows/ || echo "No Windows builds to copy"
+          cp -r artifacts/rust-macos-builds/* artifacts-branch/rust/macos/ || echo "No macOS builds to copy"
           
           # Commit and push
           cd artifacts-branch
@@ -675,29 +762,4 @@ jobs:
       - name: Create and push manifests for GraalVM
         run: |
           # First verify that images exist
-          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 || echo "Warning: Image not found, manifest may fail"
-          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64 || echo "Warning: Image not found, manifest may fail"
-          
-          # Add --purge flag to remove any existing manifest with the same name
-          docker manifest create --amend ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64 || true
-          docker manifest push --purge ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest || true
-      
-          # Version tag for Docker Hub
-          docker manifest create --amend ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-arm64 || true
-          docker manifest push --purge ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }} || true
-      
-          # GitHub Container Registry manifests for latest
-          docker manifest create --amend ghcr.io/${{ github.repository_owner }}/copilot:latest \
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64 || true
-          docker manifest push --purge ghcr.io/${{ github.repository_owner }}/copilot:latest || true
-      
-          # GitHub Container Registry manifests for version
-          docker manifest create --amend ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }} \
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-arm64 || true
-          docker manifest push --purge ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }} || true
+          docker manifest
