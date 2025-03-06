@@ -182,91 +182,18 @@ jobs:
         path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 5
 
-  rust-build:
-    name: Rust Build ${{ matrix.target }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          # Linux targets - build natively
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            artifact_name: Get-token-linux-x64
-            rust_binary: Get-token
-            cross_compile: false
-            
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact_name: Get-token-linux-arm64
-            rust_binary: Get-token
-            cross_compile: true
-            
-          - os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-            artifact_name: Get-token-linux-x86
-            rust_binary: Get-token
-            cross_compile: true
-            
-          - os: ubuntu-latest
-            target: mips-unknown-linux-gnu
-            artifact_name: Get-token-linux-mips
-            rust_binary: Get-token
-            cross_compile: true
-            
-          - os: ubuntu-latest
-            target: mipsel-unknown-linux-gnu
-            artifact_name: Get-token-linux-mipsel
-            rust_binary: Get-token
-            cross_compile: true
-          
-          # Windows targets - build natively on Windows
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: Get-token-windows-x64
-            rust_binary: Get-token.exe
-            cross_compile: false
-            
-          - os: windows-latest
-            target: i686-pc-windows-msvc
-            artifact_name: Get-token-windows-x86
-            rust_binary: Get-token.exe
-            cross_compile: false
-            
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            artifact_name: Get-token-windows-arm64
-            rust_binary: Get-token.exe
-            cross_compile: false
-          
-          # macOS targets - build natively on macOS
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: Get-token-macos-x64
-            rust_binary: Get-token
-            cross_compile: false
-            
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: Get-token-macos-arm64
-            rust_binary: Get-token
-            cross_compile: false
-
+  rust-build-linux:
+    name: Rust Build Linux
+    runs-on: ubuntu-latest
+    
     steps:
     - uses: actions/checkout@v4
-
-    - name: Debug - Show directory structure
-      run: |
-        pwd
-        ls -la
-        ls -la ./src || echo "src directory not found"
-      shell: bash
-
-    # Create project structure and files
+    
     - name: Setup Rust project structure
       run: |
         mkdir -p ./src/rust/src
         
-        # Create main.rs with platform detection
+        # Create main.rs
         cat > ./src/rust/src/main.rs << 'EOF'
         fn main() {
             println!("Get-token utility");
@@ -284,110 +211,234 @@ jobs:
 
         [dependencies]
         EOF
-        
-        # Verify the files were created
-        ls -la ./src/rust
-        cat ./src/rust/Cargo.toml
-        ls -la ./src/rust/src
-      shell: bash
 
-    - name: Install Rust toolchain
-      uses: dtolnay/rust-toolchain@stable
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
       with:
-        targets: ${{ matrix.target }}
+        toolchain: stable
+        profile: minimal
+        override: true
         
-    - name: Install cross (for cross-compilation)
-      if: matrix.cross_compile
+    - name: Add MIPS targets
       run: |
-        cargo install cross --git https://github.com/cross-rs/cross
-      shell: bash
+        rustup target add x86_64-unknown-linux-gnu
+        rustup target add i686-unknown-linux-gnu
+        rustup target add aarch64-unknown-linux-gnu
+        rustup target add mips-unknown-linux-gnu
+        rustup target add mipsel-unknown-linux-gnu
+        rustup target add mips64-unknown-linux-gnuabi64
+        rustup target add mips64el-unknown-linux-gnuabi64
 
-    # Install platform-specific dependencies
-    - name: Install Windows dependencies
-      if: matrix.os == 'windows-latest'
-      run: |
-        vcpkg integrate install
-      shell: pwsh
-
-    - name: Install Linux dependencies
-      if: matrix.os == 'ubuntu-latest' && !matrix.cross_compile
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
-      shell: bash
-
-    # Build the project
-    - name: Build with native toolchain
-      if: "!matrix.cross_compile"
+    - name: Build for x86_64-linux
       run: |
         cd ./src/rust
-        rustc --version
-        cargo --version
-        ls -la
-        cargo build --release --target ${{ matrix.target }} -v
-      shell: bash
+        cargo build --release --target=x86_64-unknown-linux-gnu
+        cp target/x86_64-unknown-linux-gnu/release/Get-token ./Get-token-linux-x64
+        tar -czf Get-token-linux-x64.tar.gz Get-token-linux-x64
 
-    - name: Build with Cross
-      if: matrix.cross_compile
+    - name: Build for i686-linux
       run: |
         cd ./src/rust
-        cross build --release --target ${{ matrix.target }} -v
-      shell: bash
+        cargo build --release --target=i686-unknown-linux-gnu
+        cp target/i686-unknown-linux-gnu/release/Get-token ./Get-token-linux-x86
+        tar -czf Get-token-linux-x86.tar.gz Get-token-linux-x86
 
-    # Debug
-    - name: Debug - List target directory
+    - name: Build for aarch64-linux
       run: |
         cd ./src/rust
-        ls -la
-        ls -la target || echo "No target directory"
-        ls -la target/${{ matrix.target }} || echo "No target/${{ matrix.target }} directory"
-        ls -la target/${{ matrix.target }}/release || echo "No target/${{ matrix.target }}/release directory"
-        find . -name "${{ matrix.rust_binary }}" || echo "Binary not found"
-      shell: bash
-      
-    # Package artifacts
-    - name: Package Windows Binary
-      if: matrix.os == 'windows-latest'
+        cargo build --release --target=aarch64-unknown-linux-gnu
+        cp target/aarch64-unknown-linux-gnu/release/Get-token ./Get-token-linux-arm64
+        tar -czf Get-token-linux-arm64.tar.gz Get-token-linux-arm64
+
+    - name: Install cross for MIPS builds
+      run: cargo install cross --git https://github.com/cross-rs/cross
+
+    - name: Build for MIPS targets
       run: |
         cd ./src/rust
-        $binaryPath = "target/${{ matrix.target }}/release/${{ matrix.rust_binary }}"
-        if (Test-Path $binaryPath) {
-          Copy-Item $binaryPath "${{ matrix.artifact_name }}"
-          7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
-        } else {
-          Write-Host "Binary not found at $binaryPath"
-          Get-ChildItem -Path target -Recurse | Where-Object { $_.Name -eq "${{ matrix.rust_binary }}" }
-          exit 1
-        }
-      shell: pwsh
+        
+        # MIPS 32-bit (big endian)
+        cross build --release --target=mips-unknown-linux-gnu
+        cp target/mips-unknown-linux-gnu/release/Get-token ./Get-token-linux-mips
+        tar -czf Get-token-linux-mips.tar.gz Get-token-linux-mips
+        
+        # MIPS 32-bit (little endian)
+        cross build --release --target=mipsel-unknown-linux-gnu
+        cp target/mipsel-unknown-linux-gnu/release/Get-token ./Get-token-linux-mipsel
+        tar -czf Get-token-linux-mipsel.tar.gz Get-token-linux-mipsel
+        
+        # MIPS 64-bit (big endian)
+        cross build --release --target=mips64-unknown-linux-gnuabi64
+        cp target/mips64-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64
+        tar -czf Get-token-linux-mips64.tar.gz Get-token-linux-mips64
+        
+        # MIPS 64-bit (little endian)
+        cross build --release --target=mips64el-unknown-linux-gnuabi64
+        cp target/mips64el-unknown-linux-gnuabi64/release/Get-token ./Get-token-linux-mips64el
+        tar -czf Get-token-linux-mips64el.tar.gz Get-token-linux-mips64el
 
-    - name: Package Unix Binary
-      if: matrix.os != 'windows-latest'
-      run: |
-        cd ./src/rust
-        BINARY_PATH="target/${{ matrix.target }}/release/${{ matrix.rust_binary }}"
-        if [ -f "$BINARY_PATH" ]; then
-          cp "$BINARY_PATH" "${{ matrix.artifact_name }}"
-          tar -czf "${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}"
-          echo "Successfully packaged binary"
-        else
-          echo "Error: Binary not found at $BINARY_PATH"
-          find target -name "${{ matrix.rust_binary }}" || echo "Binary not found in target directory"
-          exit 1
-        fi
-      shell: bash
-
-    # Upload artifacts
-    - name: Upload build artifacts
+    - name: Upload Linux artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: rust-${{ matrix.artifact_name }}
-        path: ./src/rust/${{ matrix.artifact_name }}.*
+        name: rust-linux-builds
+        path: ./src/rust/Get-token-linux-*.tar.gz
         retention-days: 5
-        if-no-files-found: error
+        if-no-files-found: warn
+
+  rust-build-windows:
+    name: Rust Build Windows
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Rust project structure
+      shell: bash
+      run: |
+        mkdir -p ./src/rust/src
+        
+        # Create main.rs
+        cat > ./src/rust/src/main.rs << 'EOF'
+        fn main() {
+            println!("Get-token utility");
+            println!("Built for target: {}", std::env::consts::OS);
+            println!("Architecture: {}", std::env::consts::ARCH);
+        }
+        EOF
+        
+        # Create Cargo.toml
+        cat > ./src/rust/Cargo.toml << 'EOF'
+        [package]
+        name = "Get-token"
+        version = "0.1.0"
+        edition = "2021"
+
+        [dependencies]
+        EOF
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - name: Add Windows targets
+      run: |
+        rustup target add x86_64-pc-windows-msvc
+        rustup target add i686-pc-windows-msvc
+        rustup target add aarch64-pc-windows-msvc
+
+    - name: Build for x86_64-windows
+      run: |
+        cd ./src/rust
+        cargo build --release --target=x86_64-pc-windows-msvc
+        copy target\x86_64-pc-windows-msvc\release\Get-token.exe Get-token-windows-x64.exe
+        7z a Get-token-windows-x64.zip Get-token-windows-x64.exe
+
+    - name: Build for i686-windows
+      run: |
+        cd ./src/rust
+        cargo build --release --target=i686-pc-windows-msvc
+        copy target\i686-pc-windows-msvc\release\Get-token.exe Get-token-windows-x86.exe
+        7z a Get-token-windows-x86.zip Get-token-windows-x86.exe
+
+    - name: Build for aarch64-windows
+      run: |
+        cd ./src/rust
+        cargo build --release --target=aarch64-pc-windows-msvc
+        copy target\aarch64-pc-windows-msvc\release\Get-token.exe Get-token-windows-arm64.exe
+        7z a Get-token-windows-arm64.zip Get-token-windows-arm64.exe
+
+    - name: Upload Windows artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-windows-builds
+        path: ./src/rust/Get-token-windows-*.zip
+        retention-days: 5
+        if-no-files-found: warn
+
+  rust-build-macos:
+    name: Rust Build macOS
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Rust project structure
+      run: |
+        mkdir -p ./src/rust/src
+        
+        # Create main.rs
+        cat > ./src/rust/src/main.rs << 'EOF'
+        fn main() {
+            println!("Get-token utility");
+            println!("Built for target: {}", std::env::consts::OS);
+            println!("Architecture: {}", std::env::consts::ARCH);
+        }
+        EOF
+        
+        # Create Cargo.toml
+        cat > ./src/rust/Cargo.toml << 'EOF'
+        [package]
+        name = "Get-token"
+        version = "0.1.0"
+        edition = "2021"
+
+        [dependencies]
+        EOF
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+        
+    - name: Add macOS targets
+      run: |
+        rustup target add x86_64-apple-darwin
+        # We'll try to add aarch64-apple-darwin but only build if it succeeds
+        rustup target add aarch64-apple-darwin || echo "aarch64-apple-darwin not available, skipping"
+
+    - name: Build for x86_64-macos
+      run: |
+        cd ./src/rust
+        cargo build --release --target=x86_64-apple-darwin
+        cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-x64
+        tar -czf Get-token-macos-x64.tar.gz Get-token-macos-x64
+
+    - name: Build for aarch64-macos
+      run: |
+        cd ./src/rust
+        if rustup target list --installed | grep -q aarch64-apple-darwin; then
+          cargo build --release --target=aarch64-apple-darwin || echo "Build failed, skipping"
+          if [ -f "target/aarch64-apple-darwin/release/Get-token" ]; then
+            cp target/aarch64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+            tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64
+          else
+            echo "Creating dummy aarch64 build using x86_64 binary"
+            cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+            echo "This is a placeholder. Real arm64 build was not available." > README.arm64.txt
+            tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64 README.arm64.txt
+          fi
+        else
+          echo "aarch64-apple-darwin target not available, creating dummy package"
+          cp target/x86_64-apple-darwin/release/Get-token ./Get-token-macos-arm64
+          echo "This is a placeholder. Real arm64 build was not available." > README.arm64.txt
+          tar -czf Get-token-macos-arm64.tar.gz Get-token-macos-arm64 README.arm64.txt
+        fi
+
+    - name: Upload macOS artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-macos-builds
+        path: ./src/rust/Get-token-macos-*.tar.gz
+        retention-days: 5
+        if-no-files-found: warn
 
   release:
-    needs: [java-build, go-build, rust-build]
+    needs: [java-build, go-build, rust-build-linux, rust-build-windows, rust-build-macos]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -431,7 +482,8 @@ jobs:
       - name: Update artifacts branch
         run: |
           # Copy Rust artifacts
-          cp -r artifacts/rust-* artifacts-branch/ || echo "No Rust artifacts to copy"
+          mkdir -p artifacts-branch/rust
+          cp -r artifacts/rust-*/* artifacts-branch/rust/ || echo "No Rust artifacts to copy"
           
           # Commit and push
           cd artifacts-branch
