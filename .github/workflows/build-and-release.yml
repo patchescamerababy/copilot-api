@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/**'
       - 'go/**'
+      - 'rust/**'
       - 'pom.xml'
       - '.github/workflows/**'
   pull_request:
@@ -13,12 +14,16 @@ on:
     paths:
       - 'src/**'
       - 'go/**'
+      - 'rust/**'
       - 'pom.xml'
       - '.github/workflows/**'
 
 permissions:
   contents: write
   packages: write
+
+env:
+  CARGO_TERM_COLOR: always
 
 jobs:
   java-build:
@@ -93,7 +98,6 @@ jobs:
         --initialize-at-build-time=CompletionHandler ^
         --initialize-at-build-time=EmbeddingHandler ^
         --initialize-at-build-time=HeadersInfo
-
 
     - name: Build Native Image (Linux/MacOS)
       if: matrix.os != 'windows-latest'
@@ -181,9 +185,126 @@ jobs:
         name: go-${{ matrix.label }}
         path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 5
+        
+  rust-build:
+    name: Rust Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: get-token-linux-x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            artifact_name: get-token-linux-arm64
+          - os: ubuntu-latest
+            target: mips-unknown-linux-gnu
+            artifact_name: get-token-linux-mips
+          - os: ubuntu-latest
+            target: mips64-unknown-linux-gnuabi64
+            artifact_name: get-token-linux-mips64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: get-token-windows-x64.exe
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            artifact_name: get-token-windows-arm64.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: get-token-macos-x64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: get-token-macos-arm64
+
+    defaults:
+      run:
+        working-directory: ./rust
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
+        profile: minimal
+
+    # Windows dependencies
+    - name: Install Windows dependencies
+      if: matrix.os == 'windows-latest'
+      run: |
+        vcpkg integrate install
+
+    # Linux dependencies
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
+
+    # Install cross for MIPS builds
+    - name: Install cross for non-standard targets
+      if: contains(matrix.target, 'mips')
+      run: |
+        cargo install cross --git https://github.com/cross-rs/cross
+
+    # Build using cross for MIPS targets
+    - name: Build with cross
+      if: contains(matrix.target, 'mips')
+      run: cross build --verbose --release --target ${{ matrix.target }}
+
+    # Build using cargo for standard targets
+    - name: Build with cargo
+      if: "!contains(matrix.target, 'mips')"
+      run: cargo build --verbose --release --target ${{ matrix.target }}
+
+    # Skip tests for MIPS targets
+    - name: Run tests
+      if: "!contains(matrix.target, 'mips')"
+      run: cargo test --verbose --target ${{ matrix.target }}
+
+    # Package Windows artifacts
+    - name: Prepare artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        $binaryPath = "target/${{ matrix.target }}/release/Get-token.exe"
+        if (Test-Path $binaryPath) {
+          Copy-Item $binaryPath "${{ matrix.artifact_name }}"
+          7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
+        } else {
+          Write-Error "Binary not found at $binaryPath"
+          exit 1
+        }
+
+    # Package Unix artifacts
+    - name: Prepare artifacts (Unix)
+      if: matrix.os != 'windows-latest'
+      run: |
+        binary_path="target/${{ matrix.target }}/release/Get-token"
+        if [ -f "$binary_path" ]; then
+          cp "$binary_path" "${{ matrix.artifact_name }}"
+          tar -czf "${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}"
+        else
+          echo "Binary not found at $binary_path"
+          find target -type f -name "Get-token" || echo "Binary not found anywhere"
+          exit 1
+        fi
+        
+    # Upload build artifacts
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-${{ matrix.artifact_name }}
+        path: ./rust/${{ matrix.artifact_name }}.*
+        retention-days: 5
+        if-no-files-found: warn
 
   release:
-    needs: [java-build, go-build]
+    needs: [java-build, go-build, rust-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -234,8 +355,8 @@ jobs:
           # Checkout main branch
           git checkout -b artifacts
           # Create basic structure
-          mkdir -p java go
-          touch java/.gitkeep go/.gitkeep
+          mkdir -p java go rust
+          touch java/.gitkeep go/.gitkeep rust/.gitkeep
           # Commit and push new branch
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
@@ -253,12 +374,15 @@ jobs:
 
       - name: Update artifacts branch
         run: |
-          # Copy Java and Go artifacts
+          # Create directories if they don't exist
           mkdir -p artifacts-branch/java
           mkdir -p artifacts-branch/go
+          mkdir -p artifacts-branch/rust
           
+          # Copy artifacts
           cp -r artifacts/java-* artifacts-branch/java/ || echo "No Java artifacts to copy"
           cp -r artifacts/go-* artifacts-branch/go/ || echo "No Go artifacts to copy"
+          cp -r artifacts/rust-* artifacts-branch/rust/ || echo "No Rust artifacts to copy"
           
           # Commit and push
           cd artifacts-branch
