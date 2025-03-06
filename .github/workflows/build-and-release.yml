@@ -139,6 +139,18 @@ jobs:
           - goos: linux
             goarch: arm64
             label: linux-arm64
+          - goos: linux
+            goarch: mips
+            label: linux-mips
+          - goos: linux
+            goarch: mipsle
+            label: linux-mipsle
+          - goos: linux
+            goarch: mips64
+            label: linux-mips64
+          - goos: linux
+            goarch: mips64le
+            label: linux-mips64le
           - goos: darwin
             goarch: amd64
             label: macos-amd64
@@ -170,8 +182,77 @@ jobs:
         path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 5
 
+  rust-build:
+    name: Rust Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: Get-token-linux-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: Get-token-windows-x64.exe
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
+        profile: minimal
+
+    # Windows specific dependencies
+    - name: Install Windows dependencies
+      if: matrix.os == 'windows-latest'
+      run: |
+        vcpkg integrate install
+
+    # Linux specific dependencies
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
+
+    - name: Build
+      working-directory: ./src/rust
+      run: cargo build --verbose --release --target ${{ matrix.target }}
+
+    - name: Run tests
+      working-directory: ./src/rust
+      run: cargo test --verbose --target ${{ matrix.target }}
+
+    # Prepare build artifacts
+    - name: Prepare artifacts (Windows)
+      if: matrix.os == 'windows-latest'
+      working-directory: ./src/rust
+      shell: pwsh
+      run: |
+        Copy-Item "target/${{ matrix.target }}/release/Get-token.exe" "${{ matrix.artifact_name }}"
+        7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
+
+    - name: Prepare artifacts (Linux)
+      if: matrix.os == 'ubuntu-latest'
+      working-directory: ./src/rust
+      run: |
+        cp target/${{ matrix.target }}/release/Get-token ${{ matrix.artifact_name }}
+        tar -czf ${{ matrix.artifact_name }}.tar.gz ${{ matrix.artifact_name }}
+        
+    # Upload build artifacts
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-${{ matrix.os }}
+        path: ./src/rust/${{ matrix.artifact_name }}.*
+        retention-days: 5
+
   release:
-    needs: [java-build, go-build]
+    needs: [java-build, go-build, rust-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -203,6 +284,27 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Update artifacts branch with Rust binaries
+      - name: Checkout artifacts branch
+        uses: actions/checkout@v4
+        with:
+          ref: artifacts
+          fetch-depth: 0
+          path: artifacts-branch
+
+      - name: Update artifacts branch
+        run: |
+          # Copy Rust artifacts
+          cp -r artifacts/rust-* artifacts-branch/
+          
+          # Commit and push
+          cd artifacts-branch
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "Update Rust artifacts for v${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push origin artifacts
 
   docker-graalvm:
     needs: [release]
@@ -413,6 +515,8 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
+      - uses: actions/checkout@v4
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -434,29 +538,30 @@ jobs:
       
       - name: Create and push manifests for GraalVM
         run: |
-          # Docker Hub manifests for GraalVM (latest)
-          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64
-          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64
+          # First verify that images exist
+          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 || echo "Warning: Image not found, manifest may fail"
+          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64 || echo "Warning: Image not found, manifest may fail"
           
+          # Add --purge flag to remove any existing manifest with the same name
           docker manifest create --amend ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64
-          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64 || true
+          docker manifest push --purge ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest || true
       
-          # Version tag for Docker Hub 
+          # Version tag for Docker Hub
           docker manifest create --amend ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }} \
             ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-arm64
-          docker manifest push ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-arm64 || true
+          docker manifest push --purge ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }} || true
       
           # GitHub Container Registry manifests for latest
           docker manifest create --amend ghcr.io/${{ github.repository_owner }}/copilot:latest \
             ghcr.io/${{ github.repository_owner }}/copilot:latest-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:latest
+            ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64 || true
+          docker manifest push --purge ghcr.io/${{ github.repository_owner }}/copilot:latest || true
       
           # GitHub Container Registry manifests for version
           docker manifest create --amend ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }} \
             ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-arm64
-          docker manifest push ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-arm64 || true
+          docker manifest push --purge ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }} || true
