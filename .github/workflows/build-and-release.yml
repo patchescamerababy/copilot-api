@@ -98,7 +98,6 @@ jobs:
         --initialize-at-build-time=CompletionHandler ^
         --initialize-at-build-time=EmbeddingHandler ^
         --initialize-at-build-time=HeadersInfo
-
     - name: Build Native Image (Linux/MacOS)
       if: matrix.os != 'windows-latest'
       shell: bash
@@ -118,14 +117,12 @@ jobs:
           --initialize-at-build-time=CompletionHandler \
           --initialize-at-build-time=EmbeddingHandler \
           --initialize-at-build-time=HeadersInfo
-
     - name: Upload Native Build
       uses: actions/upload-artifact@v4
       with:
         name: java-${{ matrix.label }}
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
-
   go-build:
     runs-on: ubuntu-latest
     strategy:
