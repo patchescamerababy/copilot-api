@@ -168,7 +168,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.21'
+        go-version: '1.23'
 
     - name: Build
       working-directory: ./go
@@ -185,9 +185,10 @@ jobs:
         name: go-${{ matrix.label }}
         path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 5
-        
-  rust-build:
-    name: Rust Build (${{ matrix.os }})
+
+  # Build native rust targets (no cross-compilation)
+  rust-build-native:
+    name: Rust Build Native
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -199,12 +200,15 @@ jobs:
             target: x86_64-pc-windows-msvc
             artifact_name: get-token-windows-x64.exe
           - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: get-token-macos-x64
+          - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: get-token-macos-arm64
 
     defaults:
       run:
-        working-directory: ./rust
+        working-directory: ./src/rust/
 
     steps:
     - uses: actions/checkout@v4
@@ -228,13 +232,13 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
+        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev libssl-dev pkg-config
 
-    # Build using cargo
+    # Build using cargo for standard targets
     - name: Build with cargo
       run: cargo build --verbose --release --target ${{ matrix.target }}
 
-    # Run tests
+    # Run tests for standard targets
     - name: Run tests
       run: cargo test --verbose --target ${{ matrix.target }}
 
@@ -275,351 +279,60 @@ jobs:
         retention-days: 5
         if-no-files-found: warn
 
-  release:
-    needs: [java-build, go-build, rust-build]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      packages: write
-    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Create version
-        id: version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: Release ${{ steps.version.outputs.version }}
-          files: artifacts/**/*
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Check if artifacts branch exists and create it if it doesn't
-      - name: Check for artifacts branch
-        id: check_branch
-        run: |
-          git fetch origin
-          if git ls-remote --heads origin artifacts | grep artifacts > /dev/null; then
-            echo "branch_exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "branch_exists=false" >> $GITHUB_OUTPUT
-          fi
-
-      # Clone main branch to create artifacts branch if it doesn't exist
-      - name: Create artifacts branch if needed
-        if: steps.check_branch.outputs.branch_exists == 'false'
-        run: |
-          # Checkout main branch
-          git checkout -b artifacts
-          # Create basic structure
-          mkdir -p java go rust
-          touch java/.gitkeep go/.gitkeep rust/.gitkeep
-          # Commit and push new branch
-          git config user.name "GitHub Action"
-          git config user.email "action@github.com"
-          git add .
-          git commit -m "Initialize artifacts branch"
-          git push -u origin artifacts
-
-      # Update artifacts branch
-      - name: Checkout artifacts branch
-        uses: actions/checkout@v4
-        with:
-          ref: artifacts
-          fetch-depth: 0
-          path: artifacts-branch
-
-      - name: Update artifacts branch
-        run: |
-          # Create directories if they don't exist
-          mkdir -p artifacts-branch/java
-          mkdir -p artifacts-branch/go
-          mkdir -p artifacts-branch/rust
-          
-          # Copy artifacts
-          cp -r artifacts/java-* artifacts-branch/java/ || echo "No Java artifacts to copy"
-          cp -r artifacts/go-* artifacts-branch/go/ || echo "No Go artifacts to copy"
-          cp -r artifacts/rust-* artifacts-branch/rust/ || echo "No Rust artifacts to copy"
-          
-          # Commit and push
-          cd artifacts-branch
-          git config user.name "GitHub Action"
-          git config user.email "action@github.com"
-          git add .
-          git commit -m "Update artifacts for v${{ steps.version.outputs.version }}" || echo "No changes to commit"
-          git push origin artifacts
-
-  docker-graalvm:
-    needs: [release]
+  # Build cross-compilation targets using cross tool
+  rust-build-cross:
+    name: Rust Build Cross-Compiled Targets
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        platform: [linux/amd64, linux/arm64]
+        target: [aarch64-unknown-linux-gnu, aarch64-pc-windows-msvc]
         include:
-          - platform: linux/amd64
-            artifact: java-linux-amd64
-            arch_tag: amd64
-          - platform: linux/arm64
-            artifact: java-linux-arm64
-            arch_tag: arm64
+          - target: aarch64-unknown-linux-gnu
+            artifact_name: get-token-linux-arm64
+          - target: aarch64-pc-windows-msvc
+            artifact_name: get-token-windows-arm64.exe
+
+    defaults:
+      run:
+        working-directory: ./rust
 
     steps:
-      - uses: actions/checkout@v4
+    - uses: actions/checkout@v4
 
-      - name: Download artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: build
+    - name: Install Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+        override: true
+        profile: minimal
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+    # Install cross for cross-compilation
+    - name: Install cross
+      run: |
+        cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+    # Linux dependencies
+    - name: Install Linux dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev libssl-dev pkg-config
 
-      - name: Create version
-        id: version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+    # Try to build with cross - continue even if it fails
+    - name: Try building with cross
+      id: cross_build
+      continue-on-error: true
+      run: |
+        if [[ "${{ matrix.target }}" == *"linux"* ]]; then
+          # For Linux targets, use cross
+          cross build --verbose --release --target ${{ matrix.target }}
+        elif [[ "${{ matrix.target }}" == "aarch64-pc-windows-msvc" ]]; then
+          # For Windows ARM64, use special flags to bypass OpenSSL
+          RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target ${{ matrix.target }} --no-default-features --features native-tls-vendored
+        else
+          cargo build --verbose --release --target ${{ matrix.target }}
+        fi
+        echo "build_succeeded=true" >> $GITHUB_OUTPUT
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare Dockerfile
-        run: |
-          mkdir -p docker
-          cp build/Java-Copilot-${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }} docker/copilot
-          cat > docker/Dockerfile << 'EOF'
-          FROM ubuntu:22.04
-          WORKDIR /app
-          COPY copilot .
-          RUN chmod +x copilot
-          EXPOSE 80
-          ENTRYPOINT ["./copilot", "80"]
-          EOF
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: docker
-          platforms: ${{ matrix.platform }}
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ matrix.arch_tag }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ matrix.arch_tag }}
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
-
-  docker-java:
-    needs: [release]
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download JAR artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: jar-files
-          path: build
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Create version
-        id: version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare Dockerfile for Java
-        run: |
-          mkdir -p docker-java
-          cp build/*.jar docker-java/
-          cat > docker-java/Dockerfile << 'EOF'
-          FROM openjdk:17-slim
-          WORKDIR /app
-          COPY *-with-dependencies.jar app.jar
-          EXPOSE 80
-          ENTRYPOINT ["java", "-jar", "app.jar", "80"]
-          EOF
-
-      - name: Build and push Java Docker
-        uses: docker/build-push-action@v5
-        with:
-          context: docker-java
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.version.outputs.version }}
-            ghcr.io/${{ github.repository_owner }}/copilot:java-latest
-            ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.version.outputs.version }}
-
-  docker-go:
-    needs: [release]
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        platform: [linux/amd64, linux/arm64]
-        include:
-          - platform: linux/amd64
-            artifact: go-linux-amd64
-            arch_tag: amd64
-          - platform: linux/arm64
-            artifact: go-linux-arm64
-            arch_tag: arm64
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download Go artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: build
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Create version
-        id: version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Prepare Dockerfile for Go
-        run: |
-          mkdir -p docker-go
-          cp build/Go-Copilot-${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }} docker-go/copilot-go
-          cat > docker-go/Dockerfile << 'EOF'
-          FROM ubuntu:22.04
-          WORKDIR /app
-          COPY copilot-go .
-          RUN chmod +x copilot-go
-          EXPOSE 80
-          ENTRYPOINT ["./copilot-go", "80"]
-          EOF
-
-      - name: Build and push Go Docker
-        uses: docker/build-push-action@v5
-        with:
-          context: docker-go
-          platforms: ${{ matrix.platform }}
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-latest-${{ matrix.arch_tag }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
-            ghcr.io/${{ github.repository_owner }}/copilot:go-latest-${{ matrix.arch_tag }}
-            ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
-
-  docker-manifest:
-    needs: [docker-graalvm, docker-go, docker-java]
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create version
-        id: version
-        run: |
-          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-      
-      - name: Create and push manifests for GraalVM
-        run: |
-          # First verify that images exist
-          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 || echo "Warning: Image not found, manifest may fail"
-          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64 || echo "Warning: Image not found, manifest may fail"
-          
-          # Add --purge flag to remove any existing manifest with the same name
-          docker manifest create --amend ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64 || true
-          docker manifest push --purge ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest || true
-      
-          # Version tag for Docker Hub
-          docker manifest create --amend ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }} \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-amd64 \
-            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-arm64 || true
-          docker manifest push --purge ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }} || true
-      
-          # GitHub Container Registry manifests for latest
-          docker manifest create --amend ghcr.io/${{ github.repository_owner }}/copilot:latest \
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:latest-arm64 || true
-          docker manifest push --purge ghcr.io/${{ github.repository_owner }}/copilot:latest || true
-      
-          # GitHub Container Registry manifests for version
-          docker manifest create --amend ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }} \
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-amd64 \
-            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-arm64 || true
-          docker manifest push --purge ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }} || true
+    # Package Windows artifacts if build succeeded
+     ▋
