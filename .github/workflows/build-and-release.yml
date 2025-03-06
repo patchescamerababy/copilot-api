@@ -216,7 +216,34 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Update artifacts branch (without Rust)
+      # Check if artifacts branch exists and create it if it doesn't
+      - name: Check for artifacts branch
+        id: check_branch
+        run: |
+          git fetch origin
+          if git ls-remote --heads origin artifacts | grep artifacts > /dev/null; then
+            echo "branch_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "branch_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Clone main branch to create artifacts branch if it doesn't exist
+      - name: Create artifacts branch if needed
+        if: steps.check_branch.outputs.branch_exists == 'false'
+        run: |
+          # Checkout main branch
+          git checkout -b artifacts
+          # Create basic structure
+          mkdir -p java go
+          touch java/.gitkeep go/.gitkeep
+          # Commit and push new branch
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "Initialize artifacts branch"
+          git push -u origin artifacts
+
+      # Update artifacts branch
       - name: Checkout artifacts branch
         uses: actions/checkout@v4
         with:
