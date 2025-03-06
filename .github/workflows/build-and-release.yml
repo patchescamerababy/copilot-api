@@ -168,7 +168,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: '1.23'
+        go-version: '1.21'
 
     - name: Build
       working-directory: ./go
@@ -186,8 +186,8 @@ jobs:
         path: go/Go-Copilot-${{ matrix.label }}${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 5
         
-  rust-build-standard:
-    name: Rust Build Standard Targets
+  rust-build:
+    name: Rust Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -195,25 +195,16 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: get-token-linux-x64
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            artifact_name: get-token-linux-arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: get-token-windows-x64.exe
-          - os: windows-latest
-            target: aarch64-pc-windows-msvc
-            artifact_name: get-token-windows-arm64.exe
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: get-token-macos-x64
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: get-token-macos-arm64
 
     defaults:
       run:
-        working-directory: ./src/rust
+        working-directory: ./rust
 
     steps:
     - uses: actions/checkout@v4
@@ -239,11 +230,11 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
 
-    # Build using cargo for standard targets
+    # Build using cargo
     - name: Build with cargo
       run: cargo build --verbose --release --target ${{ matrix.target }}
 
-    # Run tests for standard targets
+    # Run tests
     - name: Run tests
       run: cargo test --verbose --target ${{ matrix.target }}
 
@@ -283,82 +274,9 @@ jobs:
         path: ./rust/${{ matrix.artifact_name }}.*
         retention-days: 5
         if-no-files-found: warn
-        
-  rust-build-mips:
-    name: Rust Build MIPS Targets
-    runs-on: ubuntu-latest
-    continue-on-error: true  # Don't fail the whole build if MIPS targets aren't available
-    
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install Rust nightly for MIPS support
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: nightly
-        override: true
-        profile: minimal
-
-    # Install cross for MIPS builds
-    - name: Install cross for MIPS targets
-      run: |
-        cargo install cross --git https://github.com/cross-rs/cross
-
-    # Try to add MIPS targets and build placeholders if unavailable
-    - name: Try adding MIPS targets
-      run: |
-        mkdir -p ./rust/mips-builds
-        
-        # Try adding each target
-        for TARGET in "mips-unknown-linux-gnu" "mips64-unknown-linux-gnuabi64"; do
-          echo "Trying to add target $TARGET..."
-          if rustup target add --toolchain nightly $TARGET; then
-            echo "$TARGET available, will build"
-            echo "1" > "./rust/mips-builds/$TARGET.available"
-          else
-            echo "$TARGET not available, will create placeholder"
-            echo "0" > "./rust/mips-builds/$TARGET.available"
-          fi
-        done
-
-    # Build for MIPS targets that are available
-    - name: Build MIPS targets
-      working-directory: ./rust
-      run: |
-        # Try to build for each MIPS target if available
-        if [ -f "../mips-builds/mips-unknown-linux-gnu.available" ] && [ "$(cat ../mips-builds/mips-unknown-linux-gnu.available)" = "1" ]; then
-          echo "Building for mips-unknown-linux-gnu"
-          cross build --release --target=mips-unknown-linux-gnu
-          cp target/mips-unknown-linux-gnu/release/Get-token ./get-token-linux-mips
-          tar -czf get-token-linux-mips.tar.gz get-token-linux-mips
-        else
-          echo "Creating placeholder for mips-unknown-linux-gnu"
-          echo "MIPS build not available in standard Rust channels" > get-token-linux-mips.txt
-          tar -czf get-token-linux-mips.tar.gz get-token-linux-mips.txt
-        fi
-        
-        if [ -f "../mips-builds/mips64-unknown-linux-gnuabi64.available" ] && [ "$(cat ../mips-builds/mips64-unknown-linux-gnuabi64.available)" = "1" ]; then
-          echo "Building for mips64-unknown-linux-gnuabi64"
-          cross build --release --target=mips64-unknown-linux-gnuabi64
-          cp target/mips64-unknown-linux-gnuabi64/release/Get-token ./get-token-linux-mips64
-          tar -czf get-token-linux-mips64.tar.gz get-token-linux-mips64
-        else
-          echo "Creating placeholder for mips64-unknown-linux-gnuabi64"
-          echo "MIPS64 build not available in standard Rust channels" > get-token-linux-mips64.txt
-          tar -czf get-token-linux-mips64.tar.gz get-token-linux-mips64.txt
-        fi
-
-    # Upload MIPS artifacts (even if they're just placeholders)
-    - name: Upload MIPS artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: rust-mips-builds
-        path: ./rust/get-token-linux-mips*.tar.gz
-        retention-days: 5
-        if-no-files-found: warn
 
   release:
-    needs: [java-build, go-build, rust-build-standard, rust-build-mips]
+    needs: [java-build, go-build, rust-build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
