@@ -80,24 +80,6 @@
                         <buildArg>--initialize-at-build-time=CompletionHandler</buildArg>
                         <buildArg>--initialize-at-build-time=EmbeddingHandler</buildArg>
                         <buildArg>--initialize-at-build-time=HeadersInfo</buildArg>
-                        <buildArg>--initialize-at-build-time=TokenManager</buildArg>
-                        <buildArg>--initialize-at-build-time=utils</buildArg>
-                        <buildArg>--initialize-at-build-time=java.sql.DriverManager</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.JDBC</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.core.DB$ProgressObserver</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.core.DB</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.core.NativeDB</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.ProgressHandler</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.Function</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.Function$Aggregate</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.Function$Window</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.util.OSInfo</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.SQLiteConfig</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.jdbc3.JDBC3ResultSet</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.SQLiteConnectionConfig</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.jdbc4.JDBC4ResultSet</buildArg>
-                        <buildArg>--initialize-at-build-time=org.sqlite.date.FastDateParser</buildArg>
-                        <buildArg>--initialize-at-run-time=org.sqlite.SQLiteConfig$Pragma</buildArg>
                     </buildArgs>
                 </configuration>
             </plugin>
