@@ -208,7 +208,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./src/rust/
+        working-directory: ./src/rust
 
     steps:
     - uses: actions/checkout@v4
@@ -275,7 +275,7 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: rust-${{ matrix.artifact_name }}
-        path: ./rust/${{ matrix.artifact_name }}.*
+        path: ./src/rust/${{ matrix.artifact_name }}.*
         retention-days: 5
         if-no-files-found: warn
 
@@ -285,7 +285,9 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        target: [aarch64-unknown-linux-gnu, aarch64-pc-windows-msvc]
+        target:
+          - aarch64-unknown-linux-gnu
+          - aarch64-pc-windows-msvc
         include:
           - target: aarch64-unknown-linux-gnu
             artifact_name: get-token-linux-arm64
@@ -294,7 +296,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: ./rust
+        working-directory: ./src/rust
 
     steps:
     - uses: actions/checkout@v4
@@ -335,4 +337,455 @@ jobs:
         echo "build_succeeded=true" >> $GITHUB_OUTPUT
 
     # Package Windows artifacts if build succeeded
-     ▋
+    - name: Prepare Windows artifacts
+      if: matrix.target == 'aarch64-pc-windows-msvc' && steps.cross_build.outputs.build_succeeded == 'true'
+      run: |
+        if [ -f "target/${{ matrix.target }}/release/Get-token.exe" ]; then
+          cp "target/${{ matrix.target }}/release/Get-token.exe" "${{ matrix.artifact_name }}"
+          7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
+        else
+          echo "Windows ARM64 binary not found, creating placeholder"
+          echo "Windows ARM64 build not available" > "${{ matrix.artifact_name }}.txt"
+          7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}.txt"
+        fi
+
+    # Package Linux artifacts if build succeeded
+    - name: Prepare Linux artifacts
+      if: matrix.target == 'aarch64-unknown-linux-gnu' && steps.cross_build.outputs.build_succeeded == 'true'
+      run: |
+        if [ -f "target/${{ matrix.target }}/release/Get-token" ]; then
+          cp "target/${{ matrix.target }}/release/Get-token" "${{ matrix.artifact_name }}"
+          tar -czf "${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}"
+        else
+          echo "Linux ARM64 binary not found, creating placeholder"
+          echo "Linux ARM64 build not available" > "${{ matrix.artifact_name }}.txt"
+          tar -czf "${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}.txt"
+        fi
+
+    # Create placeholders if build failed
+    - name: Create placeholder artifacts
+      if: steps.cross_build.outputs.build_succeeded != 'true'
+      run: |
+        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+          echo "Windows ARM64 build not available" > "${{ matrix.artifact_name }}.txt"
+          7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}.txt"
+        else
+          echo "Linux ARM64 build not available" > "${{ matrix.artifact_name }}.txt"
+          tar -czf "${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}.txt"
+        fi
+
+    # Upload build artifacts
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-${{ matrix.artifact_name }}
+        path: ./src/rust/${{ matrix.artifact_name }}.*
+        retention-days: 5
+        if-no-files-found: warn
+        
+  # Build MIPS targets with nightly toolchain
+  rust-build-mips:
+    name: Rust Build MIPS Targets
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Don't fail the whole build if MIPS targets aren't available
+    
+    defaults:
+      run:
+        working-directory: ./src/rust
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install Rust nightly for MIPS support
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        override: true
+        profile: minimal
+
+    # Install cross for MIPS builds
+    - name: Install cross for MIPS targets
+      run: |
+        cargo install cross --git https://github.com/cross-rs/cross
+
+    # Try to add MIPS targets and build placeholders if unavailable
+    - name: Try adding MIPS targets
+      run: |
+        mkdir -p ./mips-builds
+        
+        # Try adding each target
+        for TARGET in "mips-unknown-linux-gnu" "mips64-unknown-linux-gnuabi64"; do
+          echo "Trying to add target $TARGET..."
+          if rustup target add --toolchain nightly $TARGET; then
+            echo "$TARGET available, will build"
+            echo "1" > "./mips-builds/$TARGET.available"
+          else
+            echo "$TARGET not available, will create placeholder"
+            echo "0" > "./mips-builds/$TARGET.available"
+          fi
+        done
+
+    # Build for MIPS targets that are available
+    - name: Build MIPS targets
+      run: |
+        # Try to build for each MIPS target if available
+        if [ -f "./mips-builds/mips-unknown-linux-gnu.available" ] && [ "$(cat ./mips-builds/mips-unknown-linux-gnu.available)" = "1" ]; then
+          echo "Building for mips-unknown-linux-gnu"
+          cross build --release --target=mips-unknown-linux-gnu
+          cp target/mips-unknown-linux-gnu/release/Get-token ./get-token-linux-mips
+          tar -czf get-token-linux-mips.tar.gz get-token-linux-mips
+        else
+          echo "Creating placeholder for mips-unknown-linux-gnu"
+          echo "MIPS build not available in standard Rust channels" > get-token-linux-mips.txt
+          tar -czf get-token-linux-mips.tar.gz get-token-linux-mips.txt
+        fi
+        
+        if [ -f "./mips-builds/mips64-unknown-linux-gnuabi64.available" ] && [ "$(cat ./mips-builds/mips64-unknown-linux-gnuabi64.available)" = "1" ]; then
+          echo "Building for mips64-unknown-linux-gnuabi64"
+          cross build --release --target=mips64-unknown-linux-gnuabi64
+          cp target/mips64-unknown-linux-gnuabi64/release/Get-token ./get-token-linux-mips64
+          tar -czf get-token-linux-mips64.tar.gz get-token-linux-mips64
+        else
+          echo "Creating placeholder for mips64-unknown-linux-gnuabi64"
+          echo "MIPS64 build not available in standard Rust channels" > get-token-linux-mips64.txt
+          tar -czf get-token-linux-mips64.tar.gz get-token-linux-mips64.txt
+        fi
+
+    # Upload MIPS artifacts (even if they're just placeholders)
+    - name: Upload MIPS artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: rust-mips-builds
+        path: ./src/rust/get-token-linux-mips*.tar.gz
+        retention-days: 5
+        if-no-files-found: warn
+
+  release:
+    needs: [java-build, go-build, rust-build-native, rust-build-cross, rust-build-mips]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create version
+        id: version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Check if artifacts branch exists and create it if it doesn't
+      - name: Check for artifacts branch
+        id: check_branch
+        run: |
+          git fetch origin
+          if git ls-remote --heads origin artifacts | grep artifacts > /dev/null; then
+            echo "branch_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "branch_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Clone main branch to create artifacts branch if it doesn't exist
+      - name: Create artifacts branch if needed
+        if: steps.check_branch.outputs.branch_exists == 'false'
+        run: |
+          # Checkout main branch
+          git checkout -b artifacts
+          # Create basic structure
+          mkdir -p java go rust
+          touch java/.gitkeep go/.gitkeep rust/.gitkeep
+          # Commit and push new branch
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "Initialize artifacts branch"
+          git push -u origin artifacts
+
+      # Update artifacts branch
+      - name: Checkout artifacts branch
+        uses: actions/checkout@v4
+        with:
+          ref: artifacts
+          fetch-depth: 0
+          path: artifacts-branch
+
+      - name: Update artifacts branch
+        run: |
+          # Create directories if they don't exist
+          mkdir -p artifacts-branch/java
+          mkdir -p artifacts-branch/go
+          mkdir -p artifacts-branch/rust
+          
+          # Copy artifacts
+          cp -r artifacts/java-* artifacts-branch/java/ || echo "No Java artifacts to copy"
+          cp -r artifacts/go-* artifacts-branch/go/ || echo "No Go artifacts to copy"
+          cp -r artifacts/rust-* artifacts-branch/rust/ || echo "No Rust artifacts to copy"
+          
+          # Commit and push
+          cd artifacts-branch
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "Update artifacts for v${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push origin artifacts
+
+  docker-graalvm:
+    needs: [release]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            artifact: java-linux-amd64
+            arch_tag: amd64
+          - platform: linux/arm64
+            artifact: java-linux-arm64
+            arch_tag: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create version
+        id: version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare Dockerfile
+        run: |
+          mkdir -p docker
+          cp build/Java-Copilot-${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }} docker/copilot
+          cat > docker/Dockerfile << 'EOF'
+          FROM ubuntu:22.04
+          WORKDIR /app
+          COPY copilot .
+          RUN chmod +x copilot
+          EXPOSE 80
+          ENTRYPOINT ["./copilot", "80"]
+          EOF
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: docker
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-${{ matrix.arch_tag }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
+            ghcr.io/${{ github.repository_owner }}/copilot:latest-${{ matrix.arch_tag }}
+            ghcr.io/${{ github.repository_owner }}/copilot:${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
+
+  docker-java:
+    needs: [release]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download JAR artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: jar-files
+          path: build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create version
+        id: version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare Dockerfile for Java
+        run: |
+          mkdir -p docker-java
+          cp build/*.jar docker-java/
+          cat > docker-java/Dockerfile << 'EOF'
+          FROM openjdk:17-slim
+          WORKDIR /app
+          COPY *-with-dependencies.jar app.jar
+          EXPOSE 80
+          ENTRYPOINT ["java", "-jar", "app.jar", "80"]
+          EOF
+
+      - name: Build and push Java Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: docker-java
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:java-${{ steps.version.outputs.version }}
+            ghcr.io/${{ github.repository_owner }}/copilot:java-latest
+            ghcr.io/${{ github.repository_owner }}/copilot:java-${{ steps.version.outputs.version }}
+
+  docker-go:
+    needs: [release]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux/amd64, linux/arm64]
+        include:
+          - platform: linux/amd64
+            artifact: go-linux-amd64
+            arch_tag: amd64
+          - platform: linux/arm64
+            artifact: go-linux-arm64
+            arch_tag: arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Go artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: build
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create version
+        id: version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare Dockerfile for Go
+        run: |
+          mkdir -p docker-go
+          cp build/Go-Copilot-${{ matrix.platform == 'linux/amd64' && 'linux-amd64' || 'linux-arm64' }} docker-go/copilot-go
+          cat > docker-go/Dockerfile << 'EOF'
+          FROM ubuntu:22.04
+          WORKDIR /app
+          COPY copilot-go .
+          RUN chmod +x copilot-go
+          EXPOSE 80
+          ENTRYPOINT ["./copilot-go", "80"]
+          EOF
+
+      - name: Build and push Go Docker
+        uses: docker/build-push-action@v5
+        with:
+          context: docker-go
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-latest-${{ matrix.arch_tag }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:go-${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
+            ghcr.io/${{ github.repository_owner }}/copilot:go-latest-${{ matrix.arch_tag }}
+            ghcr.io/${{ github.repository_owner }}/copilot:go-${{ steps.version.outputs.version }}-${{ matrix.arch_tag }}
+
+  docker-manifest:
+    needs: [docker-graalvm, docker-go, docker-java]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create version
+        id: version
+        run: |
+          VERSION=$(date +'%Y.%m.%d')-$(git rev-parse --short HEAD)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      
+      - name: Create and push manifests for GraalVM
+        run: |
+          # First verify that images exist
+          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 || echo "Warning: Image not found, manifest may fail"
+          docker manifest inspect ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64 || echo "Warning: Image not found, manifest may fail"
+          
+          # Add --purge flag to remove any existing manifest with the same name
+          docker manifest create --amend ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-amd64 \
+            ${{ secrets.DOCKERHUB_USERNAME }}/copilot:latest-arm64
