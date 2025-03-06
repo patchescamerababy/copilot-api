@@ -72,14 +72,6 @@
                         <buildArg>-H:+AddAllCharsets</buildArg>
                         <buildArg>--enable-https</buildArg>
                         <buildArg>--enable-http</buildArg>
-                        <buildArg>--static</buildArg>
-                        <buildArg>--no-fallback</buildArg>
-                        <buildArg>--enable-all-security-services</buildArg>
-                        <buildArg>--report-unsupported-elements-at-runtime</buildArg>
-                        <buildArg>--initialize-at-build-time=Main</buildArg>
-                        <buildArg>--initialize-at-build-time=CompletionHandler</buildArg>
-                        <buildArg>--initialize-at-build-time=EmbeddingHandler</buildArg>
-                        <buildArg>--initialize-at-build-time=HeadersInfo</buildArg>
                     </buildArgs>
                 </configuration>
             </plugin>
