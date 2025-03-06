@@ -188,161 +188,203 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux targets
+          # Linux targets - build natively
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: Get-token-linux-x64
             rust_binary: Get-token
-          - os: ubuntu-latest
-            target: i686-unknown-linux-gnu
-            artifact_name: Get-token-linux-x86
-            rust_binary: Get-token
+            cross_compile: false
+            
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
             artifact_name: Get-token-linux-arm64
             rust_binary: Get-token
+            cross_compile: true
+            
+          - os: ubuntu-latest
+            target: i686-unknown-linux-gnu
+            artifact_name: Get-token-linux-x86
+            rust_binary: Get-token
+            cross_compile: true
+            
           - os: ubuntu-latest
             target: mips-unknown-linux-gnu
             artifact_name: Get-token-linux-mips
             rust_binary: Get-token
+            cross_compile: true
+            
           - os: ubuntu-latest
             target: mipsel-unknown-linux-gnu
             artifact_name: Get-token-linux-mipsel
             rust_binary: Get-token
+            cross_compile: true
           
-          # Windows targets
+          # Windows targets - build natively on Windows
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: Get-token-windows-x64
             rust_binary: Get-token.exe
+            cross_compile: false
+            
           - os: windows-latest
             target: i686-pc-windows-msvc
             artifact_name: Get-token-windows-x86
             rust_binary: Get-token.exe
+            cross_compile: false
+            
           - os: windows-latest
             target: aarch64-pc-windows-msvc
             artifact_name: Get-token-windows-arm64
             rust_binary: Get-token.exe
+            cross_compile: false
           
-          # macOS targets - no x86, only x64 and arm64
+          # macOS targets - build natively on macOS
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: Get-token-macos-x64
             rust_binary: Get-token
+            cross_compile: false
+            
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: Get-token-macos-arm64
             rust_binary: Get-token
+            cross_compile: false
 
     steps:
     - uses: actions/checkout@v4
 
-    # Initialize default Cargo.toml if it doesn't exist or is invalid
-    - name: Initialize Rust project structure
+    - name: Debug - Show directory structure
       run: |
-        mkdir -p src/rust/src
+        pwd
+        ls -la
+        ls -la ./src || echo "src directory not found"
+      shell: bash
+
+    # Create project structure and files
+    - name: Setup Rust project structure
+      run: |
+        mkdir -p ./src/rust/src
         
-        # Create a basic main.rs file if it doesn't exist
-        if [ ! -f "src/rust/src/main.rs" ]; then
-          echo 'fn main() {
-              println!("Get-token utility");
-              println!("Built with Rust for target: ${{ matrix.target }}");
-          }' > src/rust/src/main.rs
-        fi
+        # Create main.rs with platform detection
+        cat > ./src/rust/src/main.rs << 'EOF'
+        fn main() {
+            println!("Get-token utility");
+            println!("Built for target: {}", std::env::consts::OS);
+            println!("Architecture: {}", std::env::consts::ARCH);
+        }
+        EOF
         
-        # Create or update Cargo.toml
-        cat > src/rust/Cargo.toml << EOF
+        # Create Cargo.toml
+        cat > ./src/rust/Cargo.toml << 'EOF'
         [package]
         name = "Get-token"
         version = "0.1.0"
         edition = "2021"
-        
+
         [dependencies]
-        
-        [[bin]]
-        name = "Get-token"
-        path = "src/main.rs"
         EOF
+        
+        # Verify the files were created
+        ls -la ./src/rust
+        cat ./src/rust/Cargo.toml
+        ls -la ./src/rust/src
       shell: bash
 
     - name: Install Rust toolchain
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: stable
-        target: ${{ matrix.target }}
-        override: true
-        profile: minimal
-
-    # Install cross-compilation tools for Linux targets
-    - name: Install cross-compilation dependencies (Linux)
-      if: runner.os == 'Linux' && !contains(matrix.target, 'unknown-linux-gnu')
+        targets: ${{ matrix.target }}
+        
+    - name: Install cross (for cross-compilation)
+      if: matrix.cross_compile
       run: |
-        sudo apt-get update
-        sudo apt-get install -y gcc-multilib
-        cargo install cross
+        cargo install cross --git https://github.com/cross-rs/cross
+      shell: bash
 
-    # Windows specific dependencies
+    # Install platform-specific dependencies
     - name: Install Windows dependencies
       if: matrix.os == 'windows-latest'
       run: |
         vcpkg integrate install
+      shell: pwsh
 
-    # Linux specific dependencies
     - name: Install Linux dependencies
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.os == 'ubuntu-latest' && !matrix.cross_compile
       run: |
         sudo apt-get update
         sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxkbcommon-dev
+      shell: bash
 
-    # Build with native toolchain or cross
+    # Build the project
     - name: Build with native toolchain
-      if: runner.os == matrix.os || contains(matrix.target, runner.os)
-      working-directory: ./src/rust
+      if: "!matrix.cross_compile"
       run: |
-        cargo build --verbose --release --target ${{ matrix.target }}
-      
-    - name: Build with cross (for non-native targets)
-      if: runner.os == 'Linux' && !contains(matrix.target, 'unknown-linux-gnu')
-      working-directory: ./src/rust
-      run: |
-        cross build --verbose --release --target ${{ matrix.target }}
+        cd ./src/rust
+        rustc --version
+        cargo --version
+        ls -la
+        cargo build --release --target ${{ matrix.target }} -v
+      shell: bash
 
-    # Prepare build artifacts
-    - name: Prepare artifacts (Windows)
-      if: matrix.os == 'windows-latest'
-      working-directory: ./src/rust
-      shell: pwsh
+    - name: Build with Cross
+      if: matrix.cross_compile
       run: |
+        cd ./src/rust
+        cross build --release --target ${{ matrix.target }} -v
+      shell: bash
+
+    # Debug
+    - name: Debug - List target directory
+      run: |
+        cd ./src/rust
+        ls -la
+        ls -la target || echo "No target directory"
+        ls -la target/${{ matrix.target }} || echo "No target/${{ matrix.target }} directory"
+        ls -la target/${{ matrix.target }}/release || echo "No target/${{ matrix.target }}/release directory"
+        find . -name "${{ matrix.rust_binary }}" || echo "Binary not found"
+      shell: bash
+      
+    # Package artifacts
+    - name: Package Windows Binary
+      if: matrix.os == 'windows-latest'
+      run: |
+        cd ./src/rust
         $binaryPath = "target/${{ matrix.target }}/release/${{ matrix.rust_binary }}"
         if (Test-Path $binaryPath) {
           Copy-Item $binaryPath "${{ matrix.artifact_name }}"
           7z a "${{ matrix.artifact_name }}.zip" "${{ matrix.artifact_name }}"
         } else {
-          Write-Error "Binary not found at $binaryPath"
+          Write-Host "Binary not found at $binaryPath"
+          Get-ChildItem -Path target -Recurse | Where-Object { $_.Name -eq "${{ matrix.rust_binary }}" }
           exit 1
         }
+      shell: pwsh
 
-    - name: Prepare artifacts (Unix)
+    - name: Package Unix Binary
       if: matrix.os != 'windows-latest'
-      working-directory: ./src/rust
       run: |
-        binary_path="target/${{ matrix.target }}/release/${{ matrix.rust_binary }}"
-        if [ -f "$binary_path" ]; then
-          cp "$binary_path" "${{ matrix.artifact_name }}"
+        cd ./src/rust
+        BINARY_PATH="target/${{ matrix.target }}/release/${{ matrix.rust_binary }}"
+        if [ -f "$BINARY_PATH" ]; then
+          cp "$BINARY_PATH" "${{ matrix.artifact_name }}"
           tar -czf "${{ matrix.artifact_name }}.tar.gz" "${{ matrix.artifact_name }}"
+          echo "Successfully packaged binary"
         else
-          echo "Binary not found at $binary_path"
-          find target -type f -name "${{ matrix.rust_binary }}" || echo "Binary not found anywhere"
+          echo "Error: Binary not found at $BINARY_PATH"
+          find target -name "${{ matrix.rust_binary }}" || echo "Binary not found in target directory"
           exit 1
         fi
-        
-    # Upload build artifacts
+      shell: bash
+
+    # Upload artifacts
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: rust-${{ matrix.artifact_name }}
         path: ./src/rust/${{ matrix.artifact_name }}.*
         retention-days: 5
+        if-no-files-found: error
 
   release:
     needs: [java-build, go-build, rust-build]
@@ -396,7 +438,7 @@ jobs:
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
           git add .
-          git commit -m "Update Rust artifacts for v${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git commit -m "Update artifacts for v${{ steps.version.outputs.version }}" || echo "No changes to commit"
           git push origin artifacts
 
   docker-graalvm:
