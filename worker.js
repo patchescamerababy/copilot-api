@@ -38,7 +38,7 @@ async function fetchNewToken(longTermToken) {
     return null;
 }
 
-// 从 token 字符串中提取过期时间（格式： "tid=xxx;exp=1731950502"）
+// 从 token 字符串中提取过期时间
 function extractTimestamp(tokenStr) {
     const parts = tokenStr.split(";");
     for (const part of parts) {
