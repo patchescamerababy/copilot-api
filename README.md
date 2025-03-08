@@ -13,19 +13,21 @@
 1. Run *<a href="https://github.com/patchescamerababy/copilot2api/releases">Get-token</a>* and open this <a href="https://github.com/login/device">URL</a> to get long term token.
 2. Open <a href="https://github.com/copilot">this</a> to enable copilot
 3. Save this token and use in client app
-4. Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a> or Docker
+4. Serverless deployment, or Run the server <a href="https://github.com/patchescamerababy/copilot2api/releases/">app</a>
 
-## Docker 
+## Serverless deployment
+
+Cppy *worker.js* to Cloudflare Workers
+
+## Docker deployment
 
     docker pull patchescamera/copilot2api:latest # AOT compilation based on Graalvm
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
     
-#### OR Java version
+     # OR Java version
 
     docker pull patchescamera/copilot2api:java
     docker run -d -p 8080:80 patchescamera/copilot2api:java
-
-#### Now you can compile this project using Github Actions
 
 #### Chat Test
     curl -X POST http://127.0.0.1:8080/v1/chat/completions \
