@@ -56,6 +56,13 @@ public class Main {
                 }
             }
         }
+        try {
+            OutputStream os = System.out;  // 获取 System.out 的 OutputStream
+            PrintStream ps = new PrintStream(os, true, "GBK");
+            System.setOut(ps);  // 设置新的 System.out 输出流
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
         int port = 80;
 
         if (args.length > 0) {
