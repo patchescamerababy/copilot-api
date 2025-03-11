@@ -84,8 +84,8 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v2025.03.11
-          name: Release v2025.03.11
+          tag_name: v${{ env.DATE }}
+          name: Release v${{ env.DATE }}
           files: Copilot-api-Cpp-windows-x86_64-gcc/Copilot-api-Cpp-windows-x86_64-gcc.zip
           draft: false
           prerelease: false
