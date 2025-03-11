@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
     paths:
       - 'src/**'
+      - '!src/main/cpp/**'
       - 'go/**'
       - 'rust/**'
       - 'pom.xml'
@@ -13,6 +14,7 @@ on:
     branches: [ "main" ]
     paths:
       - 'src/**'
+      - '!src/main/cpp/**'
       - 'go/**'
       - 'rust/**'
       - 'pom.xml'
