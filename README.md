@@ -21,7 +21,7 @@ Cppy *worker.js* to Cloudflare Workers
 
 ## Docker deployment
 
-    docker pull patchescamera/copilot2api:latest # AOT compilation based on Graalvm
+    docker pull patchescamera/copilot2api:latest
     docker run -d -p 8080:80 patchescamera/copilot2api:latest
     
      # OR Java version
