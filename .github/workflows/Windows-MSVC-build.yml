@@ -98,8 +98,8 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag_name: v${{ github.run_number }}
-          name: Release v${{ github.run_number }}
+          tag_name: v${{ env.DATE }}
+          name: Release v${{ env.DATE }}
           files: Copilot-api-windows-msvc/Copilot-api-Windows-x86_64-msvc.zip
           draft: false
           prerelease: false
