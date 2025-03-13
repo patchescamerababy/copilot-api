@@ -48,6 +48,10 @@ Cppy *worker.js* to Cloudflare Workers
       --header 'Authorization: Bearer <Bearer>' \
       --header 'Content-Type: application/json' \
       --data '{"messages":[{"role":"user","content":[{"type":"text","text":"What is this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAABGdBTUEAALGPC/xhBQAAAEBJREFUGNNjYACCBAWF/yCMzmaACVy4cOG/g4MDWAJEw9hwBTBBZAxXECwtjVUBSBxuDboiFEl0RVglkRUxkAoA6pU6bjl6zpsAAAAASUVORK5CYII="}}]}],"model":"gpt-4o","temperature":0.1,"top_p":0.9,"stream":false}'
+
+
+# Bearer Token:
+
 ## Build Rust based ***Get-Token*** on Debian/Ubuntu:
     sudo apt update
     sudo apt install -y libssl-dev pkg-config cargo
@@ -56,7 +60,9 @@ Cppy *worker.js* to Cloudflare Workers
 Run
      
     ./target/release/Get-Token
-     
+
+Or build by  Github Actions
+
 ## Notice:
 1. The program will automatically save the token to SQlite's token.db. Next time, if the client does not provide a token, a random token in tokens.db will be used.
 2. Image input/generation is not supported.
