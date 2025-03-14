@@ -1,52 +1,134 @@
 import com.sun.net.httpserver.HttpExchange;
+import okhttp3.*;
 import org.json.JSONObject;
 
+import javax.net.ssl.*;
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.InetSocketAddress;
+import java.net.Proxy;
+import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class utils {
     private static final ReentrantLock tokenLock = new ReentrantLock();
     private static final TokenManager tokenManager = new TokenManager();
 
-    public static String GetToken(String longTermToken) {
+    // OkHttp client instance
+    public static OkHttpClient client = createOkHttpClient();
+
+    public static OkHttpClient createOkHttpClient() {
+        OkHttpClient okHttpClient1 = null;
         try {
-            URL url = new URL("https://api.github.com/copilot_internal/v2/token");
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("GET");
-            connection.setConnectTimeout(60000); // 60 seconds
-            connection.setReadTimeout(60000); // 60 seconds
-            connection.setRequestProperty("Authorization", "token " + longTermToken);
-            connection.setRequestProperty("Editor-Plugin-Version", HeadersInfo.editor_plugin_version);
-            connection.setRequestProperty("Editor-Version", HeadersInfo.editor_version);
-            connection.setRequestProperty("User-Agent", HeadersInfo.user_agent);
-            connection.setRequestProperty("x-github-api-version", HeadersInfo.x_github_api_version);
-            connection.setRequestProperty("Sec-Fetch-Site", "none");
-            connection.setRequestProperty("Sec-Fetch-Mode", "no-cors");
-            connection.setRequestProperty("Sec-Fetch-Dest", "empty");
-
-            int responseCode = connection.getResponseCode();
-
-            if (responseCode >= 200 && responseCode < 300) {
-                String responseBody = readStream(connection.getInputStream());
-                JSONObject jsonObject = new JSONObject(responseBody);
-                if (jsonObject.has("token")) {
-                    String token = jsonObject.getString("token");
-                    System.out.println("\nNew Token:\n " + token);
-                    return token;
-                } else {
-                    System.out.println("\"token\" field not found in the response.");
+            // 创建一个不验证证书的 TrustManager
+            final X509TrustManager trustAllCertificates = new X509TrustManager() {
+                @Override
+                public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                    // 不做任何检查，信任所有客户端证书
                 }
-            } else {
-                String errorResponse = readStream(connection.getErrorStream());
-                System.out.println("Request failed, status code: " + responseCode);
-                System.out.println("Response body: " + errorResponse);
+
+                @Override
+                public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                    // 不做任何检查，信任所有服务器证书
+                }
+
+                @Override
+                public X509Certificate[] getAcceptedIssuers() {
+                    return new X509Certificate[0];
+                }
+            };
+
+            // 创建 SSLContext，使用我们的 TrustManager
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, new TrustManager[]{trustAllCertificates}, null);
+
+            // 创建代理
+            SocketAddress proxyAddress = new InetSocketAddress("127.0.0.1", 5257);
+            Proxy proxy = new Proxy(Proxy.Type.HTTP, proxyAddress);
+
+            // 如果需要代理认证
+//            Authenticator proxyAuthenticator = new Authenticator() {
+//                @Override
+//                public Request authenticate(Route route, Response response) throws IOException {
+//                    String credential = Credentials.basic("username", "password");
+//                    return response.request().newBuilder()
+//                            .header("Proxy-Authorization", credential)
+//                            .build();
+//                }
+//            };
+
+            // 创建 OkHttpClient
+            okHttpClient1 = new OkHttpClient.Builder()
+                    .proxy(proxy)  // 设置代理
+//                    .proxyAuthenticator(proxyAuthenticator)  // 如果需要代理认证
+                    .sslSocketFactory(sslContext.getSocketFactory(), trustAllCertificates)  // 设置 SSL
+                    .hostnameVerifier(new HostnameVerifier() {
+                        @Override
+                        public boolean verify(String hostname, SSLSession session) {
+                            return true;  // 不验证主机名
+                        }
+                    })
+                    .connectTimeout(30, TimeUnit.SECONDS)  // 连接超时
+                    .readTimeout(30, TimeUnit.SECONDS)     // 读取超时
+                    .writeTimeout(30, TimeUnit.SECONDS)    // 写入超时
+                    .build();
+        } catch (Exception e) {
+            throw new RuntimeException("OkHttpClient 初始化失败", e);
+        }
+        return okHttpClient1;
+    }
+
+
+    public static <jsonObject> String GetToken(String longTermToken) {
+        try {
+            Request request = new Request.Builder()
+                    .url("https://api.github.com/copilot_internal/v2/token")
+                    .addHeader("Authorization", "token " + longTermToken)
+                    .addHeader("Editor-Plugin-Version", HeadersInfo.editor_plugin_version)
+                    .addHeader("Editor-Version", HeadersInfo.editor_version)
+                    .addHeader("User-Agent", HeadersInfo.user_agent)
+                    .addHeader("x-github-api-version", HeadersInfo.x_github_api_version)
+                    .addHeader("Sec-Fetch-Site", "none")
+                    .addHeader("Sec-Fetch-Mode", "no-cors")
+                    .addHeader("Sec-Fetch-Dest", "empty")
+                    .get()
+                    .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (response.isSuccessful()) {
+                    String responseBody = response.body().string();
+                    JSONObject jsonObject = new JSONObject(responseBody);
+                    if (jsonObject.has("token")) {
+                        String token = jsonObject.getString("token");
+                        System.out.println("\nNew Token:\n " + token);
+                        if (jsonObject.has("endpoints")) {
+                            JSONObject endpoints = jsonObject.getJSONObject("endpoints");
+                            CompletionHandler.setCopilotChatCompletionsUrl(endpoints.getString("api") + "/chat/completions");
+                            System.out.println("API: " + endpoints.getString("api"));
+
+                        }
+                        return token;
+                    } else {
+                        System.out.println("\"token\" field not found in the response.");
+                    }
+                } else {
+                    String errorResponse = null;
+                    if (response.body() != null) {
+                        errorResponse = response.body().string();
+                    }
+                    System.out.println("Request failed, status code: " + response.code());
+                    System.out.println("Response body: " + errorResponse);
+                }
             }
             return null;
         } catch (Exception e) {
@@ -55,23 +137,13 @@ public class utils {
         }
     }
 
-    /**
-     * Get a valid short-term token. If it does not exist or has expired, generate a new short-term token and update the database.
-     *
-     * @param longTermToken Long-term token
-     * @return Valid short-term token
-     * @throws IOException If an error occurs while fetching or updating the token
-     */
     public static String getValidTempToken(String longTermToken) throws IOException {
-        // If the token does not exist or has expired, acquire the lock to prevent multi-threaded competition
         tokenLock.lock();
         try {
-            // Recheck to prevent competition in a multi-threaded environment
             String tempToken = tokenManager.getTempToken(longTermToken);
-
+            System.out.println("Login in as:" + tokenManager.getUsername(longTermToken));
             if (isTokenExpired(tempToken)) {
                 System.out.println("Token has expired");
-                // Generate a new short-term token
                 String newTempToken = utils.GetToken(longTermToken);
                 if (newTempToken == null || newTempToken.isEmpty()) {
                     throw new IOException("Unable to generate a new temporary token.");
@@ -85,15 +157,11 @@ public class utils {
             } else {
                 return tempToken;
             }
-
         } finally {
             tokenLock.unlock();
         }
     }
 
-    /**
-     * Send error response
-     */
     public static void sendError(HttpExchange exchange, String message, int HTTP_code) {
         try {
             JSONObject error = new JSONObject();
@@ -110,47 +178,30 @@ public class utils {
     }
 
     public static int extractTimestamp(String input) {
-        // Use split method to split the string with ";"
         String[] splitArray = input.split(";");
-
-        // Traverse the split array
         for (String part : splitArray) {
-            // If the part containing "exp=" is found
             if (part.startsWith("exp=")) {
                 return Integer.parseInt(part.substring(4));
             }
         }
-        // If not found, return a default value, such as 0
         return 0;
     }
 
-    /**
-     * Check if the token has expired
-     *
-     * @param token Token string, format like "tid=b91081296b85fc09f76d3c4ac8f0a6a6;exp=1731950502"
-     * @return Returns true if expired, false if not expired
-     */
     public static boolean isTokenExpired(String token) {
         int exp = extractTimestamp(token);
-
         int currentEpoch = (int) Instant.now().getEpochSecond();
-        // Format timestamp as "yyyy/MM/dd HH:mm:ss"
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy/MM/dd HH:mm:ss");
 
-        // Format expiration time
         LocalDateTime expirationTime = LocalDateTime.ofInstant(Instant.ofEpochSecond(exp), ZoneId.systemDefault());
         String formattedExpiration = expirationTime.format(formatter);
 
-        // Format current time
         LocalDateTime currentTime = LocalDateTime.ofInstant(Instant.ofEpochSecond(currentEpoch), ZoneId.systemDefault());
         String formattedCurrent = currentTime.format(formatter);
 
-        // Calculate remaining time (minutes and seconds)
         int remainingSeconds = exp - currentEpoch;
         int minutes = remainingSeconds / 60;
         int seconds = remainingSeconds % 60;
 
-        // Print results
         System.out.println("\n   Current epoch: " + currentEpoch);
         System.out.println("Expiration epoch: " + exp);
         System.out.println("  Current  time: " + formattedCurrent);
@@ -160,37 +211,72 @@ public class utils {
     }
 
     public static String getToken(String authorizationHeader, HttpExchange exchange) {
-
         String longTermToken;
         if (authorizationHeader == null || !authorizationHeader.startsWith("Bearer ")) {
-
-            // Use random long-term token
             longTermToken = tokenManager.getRandomLongTermToken();
             System.out.println("Using random long-term token: " + longTermToken);
         } else {
-            // Extract long-term token
             longTermToken = authorizationHeader.substring("Bearer ".length()).trim();
             if (longTermToken.isEmpty()) {
                 sendError(exchange, "Token is empty.", 401);
                 return null;
             }
 
-            // Check if the token prefix is "ghu" or "gho"
             if (!(longTermToken.startsWith("ghu") || longTermToken.startsWith("gho"))) {
                 utils.sendError(exchange, "Invalid token prefix.", 401);
                 return null;
             }
+            AtomicReference<String> login= new AtomicReference<>("");
+            CompletableFuture.runAsync(() -> {
+                try {
+                    Request request = new Request.Builder()
+                            .url("https://api.github.com/user")
+                            .addHeader("Authorization", "Bearer " + longTermToken)
+                            .addHeader("Accept", "application/vnd.github+json")
+                            .addHeader("Editor-Version", HeadersInfo.editor_version)
+                            .addHeader("user-agent", HeadersInfo.user_agent)
+                            .addHeader("x-github-api-version", "2022-11-28")
+                            .addHeader("Sec-Fetch-Site", "none")
+                            .addHeader("Sec-Fetch-Mode", "no-cors")
+                            .addHeader("Sec-Fetch-Dest", "empty")
+                            .get()
+                            .build();
 
-            // Check if the long-term token exists in the database
+                    Response response = client.newCall(request).execute();
+                    if (response.isSuccessful()) {
+                        String responseBody = null;
+                        if (response.body() != null) {
+                            responseBody = response.body().string();
+                        }
+                        JSONObject jsonObject = null;
+                        if (responseBody != null) {
+                            jsonObject = new JSONObject(responseBody);
+                        }
+                        if (jsonObject != null && jsonObject.has("login")) {
+                            login.set(jsonObject.getString("login"));
+                            System.out.println("\nlogin as: " + login);
+                        }
+                    } else {
+                        String errorResponse = null;
+                        if (response.body() != null) {
+                            errorResponse = response.body().string();
+                        }
+                        System.out.println("Request failed, status code: " + response.code());
+                        System.out.println("Response body: " + errorResponse);
+                    }
+                } catch (IOException ioException) {
+                    ioException.printStackTrace();
+                }
+            }, Executors.newSingleThreadScheduledExecutor());
+
             if (!tokenManager.isLongTermTokenExists(longTermToken)) {
-                // If not, add it
-                String newTempToken = utils.GetToken(longTermToken); // Generate new temporary token
+                String newTempToken = utils.GetToken(longTermToken);
                 if (newTempToken == null || newTempToken.isEmpty()) {
                     sendError(exchange, "Unable to generate a new temporary token.", 500);
                     return null;
                 }
-                int tempTokenExpiry = utils.extractTimestamp(newTempToken); // Assume the temporary token's expiration time can be obtained through this method
-                boolean added = tokenManager.addLongTermToken(longTermToken, newTempToken, tempTokenExpiry);
+                int tempTokenExpiry = utils.extractTimestamp(newTempToken);
+                boolean added = tokenManager.addLongTermToken(longTermToken, newTempToken, tempTokenExpiry, String.valueOf(login));
                 if (!added) {
                     sendError(exchange, "Unable to add long-term token.", 500);
                     return null;
@@ -198,7 +284,6 @@ public class utils {
             }
         }
 
-        // Get valid short-term token
         String tempToken;
         try {
             tempToken = utils.getValidTempToken(longTermToken);
@@ -214,57 +299,36 @@ public class utils {
         return tempToken;
     }
 
-    /**
-     * Read input stream content as a string
-     */
-    private static String readStream(InputStream is) throws IOException {
-        if (is == null) return "";
-        BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ( (line = reader.readLine()) != null ) {
-            sb.append(line).append("\n");
-        }
-        reader.close();
-        return sb.toString();
-    }
-
     public static byte[] decodeImageData(String dataUrl) {
         try {
             String[] parts = dataUrl.split(",");
             if (parts.length != 2) {
-                System.err.println("无效的 data URL 格式。");
+                System.err.println("Invalid data URL format.");
                 return null;
             }
             String base64Data = parts[1];
-            byte[] imageBytes = java.util.Base64.getDecoder().decode(base64Data);
-            return imageBytes;
+            return java.util.Base64.getDecoder().decode(base64Data);
         } catch (IllegalArgumentException e) {
-            System.err.println("Base64 解码失败: " + e.getMessage());
+            System.err.println("Base64 decode failed: " + e.getMessage());
             return null;
         }
     }
 
     public static byte[] downloadImageData(String imageUrl) {
         try {
-            URL url = new URL(imageUrl);
-            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-            conn.setRequestMethod("GET");
-            conn.connect();
-            int responseCode = conn.getResponseCode();
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                System.err.println("Failed to download image, response code: " + responseCode);
-                return null;
+            Request request = new Request.Builder()
+                    .url(imageUrl)
+                    .get()
+                    .build();
+
+            try (Response response = client.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    System.err.println("Failed to download image, response code: " + response.code());
+                    return null;
+                }
+
+                return response.body().bytes();
             }
-            InputStream is = conn.getInputStream();
-            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            byte[] buffer = new byte[4096];
-            int n;
-            while ((n = is.read(buffer)) != -1) {
-                baos.write(buffer, 0, n);
-            }
-            is.close();
-            return baos.toByteArray();
         } catch (IOException e) {
             System.err.println("Failed to download image: " + e.getMessage());
             return null;
