@@ -11,6 +11,7 @@ public class TokenManager {
         // Create table
         String createTableSQL = "CREATE TABLE IF NOT EXISTS tokens ("
                 + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                + "username TEXT NOT NULL UNIQUE, "
                 + "long_term_token TEXT NOT NULL UNIQUE, "
                 + "temp_token TEXT, "
                 + "temp_token_expiry INTEGER"
@@ -52,13 +53,14 @@ public class TokenManager {
     }
 
     // Add a new long-term token record
-    public boolean addLongTermToken(String longTermToken, String tempToken, long tempTokenExpiry) {
-        String insertSQL = "INSERT INTO tokens(long_term_token, temp_token, temp_token_expiry) VALUES(?, ?, ?)";
+    public boolean addLongTermToken(String longTermToken, String tempToken, long tempTokenExpiry,String username) {
+        String insertSQL = "INSERT INTO tokens(username,long_term_token, temp_token, temp_token_expiry) VALUES(?, ?, ?,?)";
         try (Connection conn = this.connect();
              PreparedStatement pstmt = conn.prepareStatement(insertSQL)) {
-            pstmt.setString(1, longTermToken);
-            pstmt.setString(2, tempToken);
-            pstmt.setLong(3, tempTokenExpiry);
+            pstmt.setString(1, username);
+            pstmt.setString(2, longTermToken);
+            pstmt.setString(3, tempToken);
+            pstmt.setLong(4, tempTokenExpiry);
             pstmt.executeUpdate();
             System.out.println("Long-term token added successfully.");
             return true;
@@ -112,6 +114,20 @@ public class TokenManager {
         return null;
     }
 
+    public String getUsername(String longTermToken) {
+        String query = "SELECT username FROM tokens WHERE long_term_token = ?";
+        try (Connection conn = this.connect();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, longTermToken);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("username");
+            }
+        } catch (SQLException e) {
+            System.out.println("Error retrieving username: " + e.getMessage());
+        }
+        return null;
+    }
     // Update the temp token and its expiry time
     public boolean updateTempToken(String longTermToken, String newTempToken, long newExpiry) {
         String updateSQL = "UPDATE tokens SET temp_token = ?, temp_token_expiry = ? WHERE long_term_token = ?";
