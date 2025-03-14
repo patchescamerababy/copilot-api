@@ -11,7 +11,7 @@ public class TokenManager {
         // Create table
         String createTableSQL = "CREATE TABLE IF NOT EXISTS tokens ("
                 + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                + "username TEXT NOT NULL UNIQUE, "
+                + "username TEXT NOT NULL, "
                 + "long_term_token TEXT NOT NULL UNIQUE, "
                 + "temp_token TEXT, "
                 + "temp_token_expiry INTEGER"
