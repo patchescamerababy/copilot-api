@@ -20,9 +20,12 @@ import java.util.stream.Collectors;
  * Handler for chat completion requests, adapting the GitHub Copilot API, only handling text generation requests.
  */
 public class CompletionHandler implements HttpHandler {
-    private static final String COPILOT_CHAT_COMPLETIONS_URL = "https://api.individual.githubcopilot.com/chat/completions";
-    private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    private static String COPILOT_CHAT_COMPLETIONS_URL = "https://api.individual.githubcopilot.com/chat/completions";
 
+    private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    public static void setCopilotChatCompletionsUrl(String api){
+        COPILOT_CHAT_COMPLETIONS_URL = api;
+    }
     @Override
     public void handle(HttpExchange exchange) throws IOException {
         // Set CORS headers
@@ -108,13 +111,63 @@ public class CompletionHandler implements HttpHandler {
                         if (message.has("content")) {
                             Object contentObj = message.get("content");
                             if (contentObj instanceof JSONArray) {
-                                JSONArray contentArray = (JSONArray) contentObj;
 
+                                JSONArray contentArray = (JSONArray) contentObj;
+                                StringBuilder msgContentBuilder = new StringBuilder();
                                 for (int j = 0; j < contentArray.length(); j++) {
                                     JSONObject contentItem = contentArray.getJSONObject(j);
                                     if (contentItem.has("type")) {
                                         if (contentItem.getString("type").equals("image_url") && contentItem.has("image_url")) {
                                            hasImage=true;
+                                            String type = contentItem.getString("type");
+                                            if (type.equals("text") && contentItem.has("text")) {
+                                                // 处理文本内容
+                                                String text = contentItem.getString("text");
+                                                msgContentBuilder.append(text);
+                                                if (j < contentArray.length() - 1) {
+                                                    msgContentBuilder.append(" ");
+                                                }
+                                            } else if (type.equals("image_url") && contentItem.has("image_url")) {
+                                                // 处理图片内容
+                                                JSONObject imageUrlObj = contentItem.getJSONObject("image_url");
+                                                String imageURL = imageUrlObj.getString("url");
+                                                if (!imageURL.startsWith("data:image/")) {
+                                                    //下载图像转为base64
+                                                    try {
+                                                        URL urlObj = new URL(imageURL);
+                                                        HttpURLConnection imgConn = (HttpURLConnection) urlObj.openConnection();
+                                                        imgConn.setRequestMethod("GET");
+                                                        imgConn.setConnectTimeout(10000);
+                                                        imgConn.setReadTimeout(10000);
+                                                        int imgResponseCode = imgConn.getResponseCode();
+                                                        if (imgResponseCode == HttpURLConnection.HTTP_OK) {
+                                                            InputStream imageStream = imgConn.getInputStream();
+                                                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+                                                            byte[] buffer = new byte[8192];
+                                                            int bytesRead;
+                                                            while ((bytesRead = imageStream.read(buffer)) != -1) {
+                                                                baos.write(buffer, 0, bytesRead);
+                                                            }
+                                                            imageStream.close();
+                                                            byte[] imageBytes = baos.toByteArray();
+                                                            String base64Image = Base64.getEncoder().encodeToString(imageBytes);
+                                                            // 获取图片的 MIME 类型
+                                                            String contentType = imgConn.getContentType();
+                                                            if (contentType == null || !contentType.startsWith("image/")) {
+                                                                contentType = "image/png"; // 默认类型
+                                                            }
+                                                            String dataUri = "data:" + contentType + ";base64," + base64Image;
+                                                            // 将 image_url 更新为 data URI 格式
+                                                            imageUrlObj.put("url", dataUri);
+                                                        } else {
+                                                            System.err.println("Failed to download image. Response code: " + imgResponseCode);
+                                                        }
+                                                    } catch (Exception e) {
+                                                        e.printStackTrace();
+                                                    }
+                                                }
+
+                                            }
                                         }
                                     }
                                 }
