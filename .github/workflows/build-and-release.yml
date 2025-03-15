@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-
+      - 'src/**'
       - '!src/main/cpp/**'
       - 'go/**'
       - 'rust/**'
@@ -91,17 +91,21 @@ jobs:
         copy target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target\native-image\Copilot-api.jar
         cd target\native-image
         native-image.cmd ^
-        -H:+AddAllCharsets ^
-        -jar Copilot-api.jar ^
-        -H:Name=Java-Copilot-${{ matrix.label }} ^
-        --enable-https ^
-        --enable-http ^
-        --static ^
         --no-fallback ^
-        --initialize-at-build-time=Main ^
-        --initialize-at-build-time=CompletionHandler ^
-        --initialize-at-build-time=EmbeddingHandler ^
-        --initialize-at-build-time=HeadersInfo
+        -J-Dsqlite.purejava=true ^
+        --initialize-at-run-time=com.sun.jna,org.sqlite ^
+        --enable-url-protocols=http,https ^
+        -H:+JNI ^
+        -H:+AddAllCharsets ^
+        -H:+UnlockExperimentalVMOptions ^
+        -H:+ReportExceptionStackTraces ^
+        -H:ResourceConfigurationFiles=src/main/resources/META-INF/native-image/resource-config.json ^
+        -H:ReflectionConfigurationFiles=src/main/resources/META-INF/native-image/reflect-config.json ^
+        -H:JNIConfigurationFiles=src/main/resources/META-INF/native-image/jni-config.json ^
+        -H:DynamicProxyConfigurationFiles=src/main/resources/META-INF/native-image/proxy-config.json ^
+        -H:SerializationConfigurationFiles=src/main/resources/META-INF/native-image/serialization-config.json ^
+        -jar Copilot-api.jar ^
+        -H:Name=Java-Copilot-${{ matrix.label }}
 
     - name: Build Native Image (Linux/MacOS)
       if: matrix.os != 'windows-latest'
@@ -111,17 +115,22 @@ jobs:
         cp target/*-with-dependencies.jar target/native-image/Copilot-api.jar
         cd target/native-image
         native-image \
+          --no-fallback \
+          -J-Dsqlite.purejava=true \
+          --initialize-at-run-time=com.sun.jna,org.sqlite \
+          --enable-url-protocols=http,https \
+          -H:+JNI \
           -H:+AddAllCharsets \
+          -H:+UnlockExperimentalVMOptions \
+          -H:+ReportExceptionStackTraces \
+          -H:ResourceConfigurationFiles=src/main/resources/META-INF/native-image/resource-config.json \
+          -H:ReflectionConfigurationFiles=src/main/resources/META-INF/native-image/reflect-config.json \
+          -H:JNIConfigurationFiles=src/main/resources/META-INF/native-image/jni-config.json \
+          -H:DynamicProxyConfigurationFiles=src/main/resources/META-INF/native-image/proxy-config.json \
+          -H:SerializationConfigurationFiles=src/main/resources/META-INF/native-image/serialization-config.json \
           -jar Copilot-api.jar \
           -H:Name=Java-Copilot-${{ matrix.label }} \
-          --enable-https \
-          --enable-http \
-          ${{ matrix.static == true && '--static' || '' }} \
-          --no-fallback \
-          --initialize-at-build-time=Main \
-          --initialize-at-build-time=CompletionHandler \
-          --initialize-at-build-time=EmbeddingHandler \
-          --initialize-at-build-time=HeadersInfo
+          ${{ matrix.static == true && '--static' || '' }}
 
     - name: Upload Native Build
       uses: actions/upload-artifact@v4
@@ -129,6 +138,7 @@ jobs:
         name: java-${{ matrix.label }}
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
+
 
   go-build:
     runs-on: ubuntu-latest
