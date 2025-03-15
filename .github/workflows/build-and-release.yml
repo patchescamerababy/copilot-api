@@ -66,7 +66,9 @@ jobs:
         native-image-job-reports: 'true'
         architecture: ${{ matrix.arch }}
 
-    - name: Fix native-image.properties in source
+    - name: Fix native-image.properties (Linux/MacOS)
+      if: matrix.os != 'windows-latest'
+      shell: bash
       run: |
         # Check if the problematic file exists
         NATIVE_IMAGE_PROPS_DIR=src/main/resources/META-INF/native-image
@@ -100,6 +102,43 @@ jobs:
         done
         
         cat $NATIVE_IMAGE_PROPS_FILE
+
+    - name: Fix native-image.properties (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        # Check if the problematic file exists
+        $NATIVE_IMAGE_PROPS_DIR = "src\main\resources\META-INF\native-image"
+        $NATIVE_IMAGE_PROPS_FILE = "$NATIVE_IMAGE_PROPS_DIR\native-image.properties"
+        New-Item -Path $NATIVE_IMAGE_PROPS_DIR -ItemType Directory -Force
+        
+        # Create or overwrite the properties file with correct syntax
+        "# Native Image Properties" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8
+        "Args = --no-fallback \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      -J-Dsqlite.purejava=true \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      --initialize-at-run-time=com.sun.jna \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      --initialize-at-run-time=org.sqlite \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      --enable-url-protocols=http,https \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      -H:+JNI \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      -H:+AddAllCharsets \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      -H:+UnlockExperimentalVMOptions \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        "      -H:+ReportExceptionStackTraces" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
+        
+        # Create empty config files if they don't exist
+        $CONFIG_FILES = @("resource-config.json", "reflect-config.json", "jni-config.json", "proxy-config.json", "serialization-config.json")
+        foreach ($file in $CONFIG_FILES) {
+          if (-Not (Test-Path "$NATIVE_IMAGE_PROPS_DIR\$file")) {
+            if ($file -eq "resource-config.json") {
+              '{"resources":{"includes":[]}}' | Out-File -FilePath "$NATIVE_IMAGE_PROPS_DIR\$file" -Encoding utf8
+            } elseif ($file -eq "serialization-config.json") {
+              '{"types":[],"lambdaCapturingTypes":[],"proxies":[]}' | Out-File -FilePath "$NATIVE_IMAGE_PROPS_DIR\$file" -Encoding utf8
+            } else {
+              '[]' | Out-File -FilePath "$NATIVE_IMAGE_PROPS_DIR\$file" -Encoding utf8
+            }
+          }
+        }
+        
+        Get-Content $NATIVE_IMAGE_PROPS_FILE
 
     - name: Build with Maven
       run: |
@@ -147,6 +186,7 @@ jobs:
         name: java-${{ matrix.label }}
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
+
 
 
   go-build:
