@@ -83,6 +83,18 @@ jobs:
           target/*-javadoc.jar
         retention-days: 5
 
+    - name: Prepare Config Files
+      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
+      run: |
+        mkdir -p target/native-image-config
+        # Prepare configuration files if they don't exist in your project
+        [ -d "src/main/resources/META-INF/native-image" ] || mkdir -p src/main/resources/META-INF/native-image
+        [ -f "src/main/resources/META-INF/native-image/resource-config.json" ] || echo '{"resources":{"includes":[]}}' > src/main/resources/META-INF/native-image/resource-config.json
+        [ -f "src/main/resources/META-INF/native-image/reflect-config.json" ] || echo '[]' > src/main/resources/META-INF/native-image/reflect-config.json
+        [ -f "src/main/resources/META-INF/native-image/jni-config.json" ] || echo '[]' > src/main/resources/META-INF/native-image/jni-config.json
+        [ -f "src/main/resources/META-INF/native-image/proxy-config.json" ] || echo '[]' > src/main/resources/META-INF/native-image/proxy-config.json
+        [ -f "src/main/resources/META-INF/native-image/serialization-config.json" ] || echo '{"types":[],"lambdaCapturingTypes":[],"proxies":[]}' > src/main/resources/META-INF/native-image/serialization-config.json
+
     - name: Build Native Image (Windows)
       if: matrix.os == 'windows-latest'
       shell: cmd
@@ -93,8 +105,6 @@ jobs:
         native-image.cmd ^
         --no-fallback ^
         -J-Dsqlite.purejava=true ^
-        --initialize-at-run-time=com.sun.jna,org.sqlite ^
-        --enable-url-protocols=http,https ^
         -H:+JNI ^
         -H:+AddAllCharsets ^
         -H:+UnlockExperimentalVMOptions ^
@@ -104,6 +114,9 @@ jobs:
         -H:JNIConfigurationFiles=../../src/main/resources/META-INF/native-image/jni-config.json ^
         -H:DynamicProxyConfigurationFiles=../../src/main/resources/META-INF/native-image/proxy-config.json ^
         -H:SerializationConfigurationFiles=../../src/main/resources/META-INF/native-image/serialization-config.json ^
+        --initialize-at-run-time=com.sun.jna ^
+        --initialize-at-run-time=org.sqlite ^
+        --enable-url-protocols=http,https ^
         -jar Copilot-api.jar ^
         -H:Name=Java-Copilot-${{ matrix.label }}
 
@@ -117,8 +130,6 @@ jobs:
         native-image \
           --no-fallback \
           -J-Dsqlite.purejava=true \
-          --initialize-at-run-time=com.sun.jna,org.sqlite \
-          --enable-url-protocols=http,https \
           -H:+JNI \
           -H:+AddAllCharsets \
           -H:+UnlockExperimentalVMOptions \
@@ -128,6 +139,9 @@ jobs:
           -H:JNIConfigurationFiles=../../src/main/resources/META-INF/native-image/jni-config.json \
           -H:DynamicProxyConfigurationFiles=../../src/main/resources/META-INF/native-image/proxy-config.json \
           -H:SerializationConfigurationFiles=../../src/main/resources/META-INF/native-image/serialization-config.json \
+          --initialize-at-run-time=com.sun.jna \
+          --initialize-at-run-time=org.sqlite \
+          --enable-url-protocols=http,https \
           -jar Copilot-api.jar \
           -H:Name=Java-Copilot-${{ matrix.label }} \
           ${{ matrix.static == true && '--static' || '' }}
