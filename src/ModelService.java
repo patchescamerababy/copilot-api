@@ -1,3 +1,6 @@
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -461,46 +464,42 @@ public class ModelService {
      */
     public static List<JSONObject> fetchModels(String token) throws Exception {
         List<JSONObject> fetchedModels = new ArrayList<>();
-        URL url = new URL("https://api.individual.githubcopilot.com/models");
 
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setRequestMethod("GET");
-        connection.setRequestProperty("authorization", "Bearer " + token);
-        connection.setRequestProperty("editor-version", HeadersInfo.editor_version);
-        connection.setRequestProperty("copilot_language_server_version",HeadersInfo.copilot_language_server_version);
-        connection.setRequestProperty("openai-intent", "model-access");
-        connection.setRequestProperty("openai-organization", HeadersInfo.openai_organization);
-        connection.setRequestProperty("editor-plugin-version", HeadersInfo.editor_plugin_version);
-        connection.setRequestProperty("x-github-api-version", HeadersInfo.x_github_api_version);
-        connection.setRequestProperty("user-agent", HeadersInfo.user_agent);
-        connection.setRequestProperty("Sec-Fetch-Site", "none");
-        connection.setRequestProperty("Sec-Fetch-Mode", "no-cors");
-        connection.setRequestProperty("Sec-Fetch-Desc", "empty");
-        connection.setRequestProperty("accept", "*/*");
-        connection.setRequestProperty("accept-encoding", "gzip, deflate, br zstd");
-        connection.setRequestProperty("Connection", "close");
+        OkHttpClient client = utils.getOkHttpClient();
 
-        // Read the response
-        int responseCode = connection.getResponseCode();
-        if (responseCode == 200) {
-            BufferedReader in = new BufferedReader(new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8));
-            String inputLine;
-            StringBuilder response = new StringBuilder();
-            while ((inputLine = in.readLine()) != null) {
-                response.append(inputLine);
+        Request request = new Request.Builder()
+                .url("https://api.individual.githubcopilot.com/models")
+                .addHeader("authorization", "Bearer " + token)
+                .addHeader("editor-version", HeadersInfo.editor_version)
+                .addHeader("copilot_language_server_version", HeadersInfo.copilot_language_server_version)
+                .addHeader("openai-intent", "model-access")
+                .addHeader("openai-organization", HeadersInfo.openai_organization)
+                .addHeader("editor-plugin-version", HeadersInfo.editor_plugin_version)
+                .addHeader("x-github-api-version", HeadersInfo.x_github_api_version)
+                .addHeader("user-agent", HeadersInfo.user_agent)
+                .addHeader("Sec-Fetch-Site", "none")
+                .addHeader("Sec-Fetch-Mode", "no-cors")
+                .addHeader("Sec-Fetch-Desc", "empty")
+                .addHeader("accept", "*/*")
+                .addHeader("accept-encoding", "gzip, deflate, br zstd")
+                .addHeader("Connection", "close")
+                .build();
+
+        try (Response response = client.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new RuntimeException("Failed to fetch models. HTTP response code: " + response.code());
             }
-            in.close();
 
-            // Parse the JSON response
-            JSONObject jsonResponse = new JSONObject(response.toString());
+            String responseBody = response.body().string();
+            JSONObject jsonResponse = new JSONObject(responseBody);
             JSONArray jsonArray = jsonResponse.getJSONArray("data");
+
             for (int i = 0; i < jsonArray.length(); i++) {
                 fetchedModels.add(jsonArray.getJSONObject(i));
             }
-        } else {
-            throw new RuntimeException("Failed to fetch models. HTTP response code: " + responseCode);
         }
 
         return fetchedModels;
     }
+
 }
