@@ -110,8 +110,6 @@
     "pattern":"jdk.internal.vm.compiler:\\Qorg/graalvm/compiler/replacements/arraycopy/ArrayCopyWithDelayedLoweringNode.class\\E"
   }, {
     "pattern":"jdk.internal.vm.compiler:\\Qorg/graalvm/compiler/replacements/gc/G1WriteBarrierSnippets.class\\E"
-  }, {
-    "pattern":"org.graalvm.word:\\Qorg/graalvm/word/LocationIdentity.class\\E"
   }]},
   "bundles":[]
 }
