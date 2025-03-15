@@ -1,3 +1,5 @@
+import com.sun.jna.platform.win32.Advapi32Util;
+import com.sun.jna.platform.win32.WinReg;
 import com.sun.net.httpserver.HttpExchange;
 import okhttp3.*;
 import org.json.JSONObject;
@@ -27,7 +29,10 @@ public class utils {
     // OkHttp client instance
     public static OkHttpClient client = createOkHttpClient();
 
-    public static OkHttpClient createOkHttpClient() {
+    public static OkHttpClient getOkHttpClient() {
+        return client;
+    }
+    private static OkHttpClient createOkHttpClient() {
         OkHttpClient okHttpClient1 = null;
         try {
             // 创建一个不验证证书的 TrustManager
@@ -53,24 +58,13 @@ public class utils {
             sslContext.init(null, new TrustManager[]{trustAllCertificates}, null);
 
             // 创建代理
-            SocketAddress proxyAddress = new InetSocketAddress("127.0.0.1", 5257);
-            Proxy proxy = new Proxy(Proxy.Type.HTTP, proxyAddress);
 
-            // 如果需要代理认证
-//            Authenticator proxyAuthenticator = new Authenticator() {
-//                @Override
-//                public Request authenticate(Route route, Response response) throws IOException {
-//                    String credential = Credentials.basic("username", "password");
-//                    return response.request().newBuilder()
-//                            .header("Proxy-Authorization", credential)
-//                            .build();
-//                }
-//            };
+            Proxy proxy = getSystemProxy();
+
 
             // 创建 OkHttpClient
             okHttpClient1 = new OkHttpClient.Builder()
                     .proxy(proxy)  // 设置代理
-//                    .proxyAuthenticator(proxyAuthenticator)  // 如果需要代理认证
                     .sslSocketFactory(sslContext.getSocketFactory(), trustAllCertificates)  // 设置 SSL
                     .hostnameVerifier(new HostnameVerifier() {
                         @Override
@@ -86,6 +80,134 @@ public class utils {
             throw new RuntimeException("OkHttpClient 初始化失败", e);
         }
         return okHttpClient1;
+    }
+    public static Proxy getSystemProxy() {
+        String os = System.getProperty("os.name").toLowerCase();
+        Proxy proxy = Proxy.NO_PROXY;
+
+        try {
+            if (os.contains("win")) {
+                // Windows系统检查
+                // 1. 首先检查系统属性
+                String proxyHost = System.getProperty("http.proxyHost");
+                String proxyPort = System.getProperty("http.proxyPort");
+
+                if (proxyHost != null && proxyPort != null) {
+                    try {
+                        int port = Integer.parseInt(proxyPort);
+                        if (port > 0 && port <= 65535) {
+                            return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, port));
+                        }
+                    } catch (NumberFormatException e) {
+                        System.err.println("Invalid proxy port number: " + proxyPort);
+                    }
+                }
+
+                // 2. 检查环境变量
+                String envProxy = System.getenv("HTTP_PROXY");
+                if (envProxy != null && !envProxy.isEmpty()) {
+                    try {
+                        return parseProxyFromString(envProxy);
+                    } catch (Exception e) {
+                        System.err.println("Failed to parse HTTP_PROXY environment variable: " + e.getMessage());
+                    }
+                }
+
+                // 3. 检查Windows注册表
+                try {
+                    // 检查代理是否启用
+                    boolean proxyEnable = Advapi32Util.registryGetIntValue(
+                            WinReg.HKEY_CURRENT_USER,
+                            "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+                            "ProxyEnable"
+                    ) != 0;
+
+                    if (proxyEnable) {
+                        // 获取代理服务器地址
+                        String proxyServer = Advapi32Util.registryGetStringValue(
+                                WinReg.HKEY_CURRENT_USER,
+                                "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
+                                "ProxyServer"
+                        );
+
+                        if (proxyServer != null && !proxyServer.isEmpty()) {
+                            // 处理代理服务器地址
+                            // 可能的格式：
+                            // 1. host:port
+                            // 2. http=host:port;https=host:port;ftp=host:port
+                            if (proxyServer.contains("=")) {
+                                // 包含多个协议的代理设置
+                                for (String proxy0 : proxyServer.split(";")) {
+                                    if (proxy0.startsWith("http=")) {
+                                        proxyServer = proxy0.substring(5);
+                                        break;
+                                    }
+                                }
+                            }
+
+                            try {
+                                System.out.println("Detected system proxy: " + proxyServer);
+                                return parseProxyFromString(proxyServer);
+                            } catch (Exception e) {
+                                System.err.println("Failed to parse registry proxy settings: " + e.getMessage());
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("Failed to read Windows registry: " + e.getMessage());
+                }
+
+            } else if (os.contains("nix") || os.contains("nux") || os.contains("mac")) {
+                // Linux/MacOS系统检查
+                String[] proxyEnvVars = {"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"};
+
+                for (String envVar : proxyEnvVars) {
+                    String proxyUrl = System.getenv(envVar);
+                    if (proxyUrl != null && !proxyUrl.isEmpty()) {
+                        try {
+                            System.out.println("Detected system proxy: " + proxyUrl);
+                            return parseProxyFromString(proxyUrl);
+                        } catch (Exception e) {
+                            System.err.println("Failed to parse " + envVar + ": " + e.getMessage());
+                        }
+                    }
+                }
+            } else {
+                System.out.println("Unknown OS or no system proxy configuration found.");
+            }
+        } catch (Exception e) {
+            System.err.println("Error while getting system proxy: " + e.getMessage());
+        }
+        return proxy;
+    }
+
+    private static Proxy parseProxyFromString(String proxyString) {
+        proxyString = proxyString.trim().toLowerCase();
+        proxyString = proxyString.replaceFirst("^(http|https)://", "");
+
+        // 处理认证信息
+        if (proxyString.contains("@")) {
+            proxyString = proxyString.substring(proxyString.lastIndexOf("@") + 1);
+        }
+
+        String host;
+        int port;
+
+        if (proxyString.contains(":")) {
+            String[] parts = proxyString.split(":");
+            host = parts[0];
+            String portStr = parts[1].split("/")[0];
+            port = Integer.parseInt(portStr);
+        } else {
+            host = proxyString;
+            port = 80; // 默认HTTP代理端口
+        }
+
+        if (!host.isEmpty() && port > 0 && port <= 65535) {
+            return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(host, port));
+        }
+
+        throw new IllegalArgumentException("Invalid proxy configuration");
     }
 
 
