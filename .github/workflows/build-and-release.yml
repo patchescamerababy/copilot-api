@@ -99,11 +99,11 @@ jobs:
         -H:+AddAllCharsets ^
         -H:+UnlockExperimentalVMOptions ^
         -H:+ReportExceptionStackTraces ^
-        -H:ResourceConfigurationFiles=src/main/resources/META-INF/native-image/resource-config.json ^
-        -H:ReflectionConfigurationFiles=src/main/resources/META-INF/native-image/reflect-config.json ^
-        -H:JNIConfigurationFiles=src/main/resources/META-INF/native-image/jni-config.json ^
-        -H:DynamicProxyConfigurationFiles=src/main/resources/META-INF/native-image/proxy-config.json ^
-        -H:SerializationConfigurationFiles=src/main/resources/META-INF/native-image/serialization-config.json ^
+        -H:ResourceConfigurationFiles=../../src/main/resources/META-INF/native-image/resource-config.json ^
+        -H:ReflectionConfigurationFiles=../../src/main/resources/META-INF/native-image/reflect-config.json ^
+        -H:JNIConfigurationFiles=../../src/main/resources/META-INF/native-image/jni-config.json ^
+        -H:DynamicProxyConfigurationFiles=../../src/main/resources/META-INF/native-image/proxy-config.json ^
+        -H:SerializationConfigurationFiles=../../src/main/resources/META-INF/native-image/serialization-config.json ^
         -jar Copilot-api.jar ^
         -H:Name=Java-Copilot-${{ matrix.label }}
 
@@ -123,11 +123,11 @@ jobs:
           -H:+AddAllCharsets \
           -H:+UnlockExperimentalVMOptions \
           -H:+ReportExceptionStackTraces \
-          -H:ResourceConfigurationFiles=src/main/resources/META-INF/native-image/resource-config.json \
-          -H:ReflectionConfigurationFiles=src/main/resources/META-INF/native-image/reflect-config.json \
-          -H:JNIConfigurationFiles=src/main/resources/META-INF/native-image/jni-config.json \
-          -H:DynamicProxyConfigurationFiles=src/main/resources/META-INF/native-image/proxy-config.json \
-          -H:SerializationConfigurationFiles=src/main/resources/META-INF/native-image/serialization-config.json \
+          -H:ResourceConfigurationFiles=../../src/main/resources/META-INF/native-image/resource-config.json \
+          -H:ReflectionConfigurationFiles=../../src/main/resources/META-INF/native-image/reflect-config.json \
+          -H:JNIConfigurationFiles=../../src/main/resources/META-INF/native-image/jni-config.json \
+          -H:DynamicProxyConfigurationFiles=../../src/main/resources/META-INF/native-image/proxy-config.json \
+          -H:SerializationConfigurationFiles=../../src/main/resources/META-INF/native-image/serialization-config.json \
           -jar Copilot-api.jar \
           -H:Name=Java-Copilot-${{ matrix.label }} \
           ${{ matrix.static == true && '--static' || '' }}
@@ -138,6 +138,7 @@ jobs:
         name: java-${{ matrix.label }}
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
+
 
 
   go-build:
