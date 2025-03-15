@@ -59,12 +59,12 @@ public class utils {
 
             // 创建代理
 
-            Proxy proxy = getSystemProxy();
+            //Proxy proxy = getSystemProxy();
 
 
             // 创建 OkHttpClient
             okHttpClient1 = new OkHttpClient.Builder()
-                    .proxy(proxy)  // 设置代理
+                    //.proxy(proxy)  // 设置代理
                     .sslSocketFactory(sslContext.getSocketFactory(), trustAllCertificates)  // 设置 SSL
                     .hostnameVerifier(new HostnameVerifier() {
                         @Override
@@ -81,7 +81,7 @@ public class utils {
         }
         return okHttpClient1;
     }
-    public static Proxy getSystemProxy() {
+    /*public static Proxy getSystemProxy() {
         String os = System.getProperty("os.name").toLowerCase();
         Proxy proxy = Proxy.NO_PROXY;
 
@@ -179,7 +179,7 @@ public class utils {
             System.err.println("Error while getting system proxy: " + e.getMessage());
         }
         return proxy;
-    }
+    }*/
 
     private static Proxy parseProxyFromString(String proxyString) {
         proxyString = proxyString.trim().toLowerCase();
