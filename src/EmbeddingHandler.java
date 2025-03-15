@@ -1,25 +1,30 @@
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
+import okhttp3.*;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.*;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
-
 public class EmbeddingHandler implements HttpHandler {
     public static final String COPILOT_CHAT_EMBEDDINGS_URL = "https://api.individual.githubcopilot.com/embeddings";
     private final ExecutorService executor = Executors.newFixedThreadPool(10);
+
+    /**
+     * 可以在项目里全局复用一个 OkHttpClient，也可以这样在当前类中静态持有
+     */
+    private static final OkHttpClient okHttpClient = new OkHttpClient.Builder()
+            // 设置连接、读取超时（可根据需要进行调整）
+            .connectTimeout(java.time.Duration.ofSeconds(120))
+            .readTimeout(java.time.Duration.ofSeconds(120))
+            .build();
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -65,7 +70,7 @@ public class EmbeddingHandler implements HttpHandler {
                 System.out.println(requestBody);
                 JSONObject requestJson = new JSONObject(requestBody);
 
-                // Send request to GitHub Copilot API and get response
+                // 发送 Embedding 请求至 GitHub Copilot API
                 handleEmbeddingRequest(exchange, requestJson, receivedToken);
 
             } catch (JSONException e) {
@@ -87,7 +92,7 @@ public class EmbeddingHandler implements HttpHandler {
     }
 
     /**
-     * Send error response
+     * 发送错误响应
      */
     private void sendErrorResponse(HttpExchange exchange, int statusCode, String message) throws IOException {
         JSONObject errorJson = new JSONObject();
@@ -102,7 +107,7 @@ public class EmbeddingHandler implements HttpHandler {
     }
 
     /**
-     * Read the request body and return as a string
+     * 读取请求 Body
      */
     private String readRequestBody(InputStream is) throws IOException {
         String body = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))
@@ -112,7 +117,7 @@ public class EmbeddingHandler implements HttpHandler {
     }
 
     /**
-     * Format JSON string for printing
+     * 辅助方法：格式化 JSON 便于日志输出
      */
     private String formatJson(String jsonString) {
         try {
@@ -121,87 +126,71 @@ public class EmbeddingHandler implements HttpHandler {
         } catch (JSONException e) {
             try {
                 JSONArray jsonArray = new JSONArray(jsonString);
-                return jsonArray.toString(4); // Indent with 4 spaces
+                return jsonArray.toString(4);
             } catch (JSONException ex) {
-                return jsonString; // Not a valid JSON, return the original string
+                return jsonString; // 不可解析为JSON则直接返回原字符串
             }
         }
     }
 
-
     /**
-     * Handle embedding request
+     * 负责处理 Embedding 请求：使用 OkHttp 发送给 Copilot 并返回结果
      */
     private void handleEmbeddingRequest(HttpExchange exchange, JSONObject jsonBody, String receivedToken) throws IOException {
-        // Set request headers
+        // 准备 Headers
         Map<String, String> headers = HeadersInfo.getCopilotHeaders();
-        headers.put("Authorization", "Bearer " + receivedToken); // Update Token
+        // 加上用户传入的 Token
+        headers.put("Authorization", "Bearer " + receivedToken);
 
-        // Build and send HttpURLConnection
-        HttpURLConnection connection = createConnection(headers, jsonBody);
-        int responseCode = connection.getResponseCode();
-        String responseBody = readStream(connection.getInputStream());
-        System.out.println(formatJson(responseBody));
+        // 用 OkHttp 发起请求
+        try (Response response = executeOkHttpRequest(headers, jsonBody)) {
+            int responseCode = response.code();
+            String responseBody = response.body() != null ? response.body().string() : "";
 
-        if (responseCode == 200) {
-            // Return response body
-            System.out.println("Received Embedding Response from Copilot API:");
+            // 打印/格式化日志
+            System.out.println("Embedding Response from Copilot API:");
             System.out.println(formatJson(responseBody));
 
-            // Directly return Copilot's response
-            byte[] responseBytes = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(200, responseBytes.length);
-            try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseBytes);
+            if (response.isSuccessful()) {
+                // 直接把返回结果写回给客户端
+                byte[] responseBytes = responseBody.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
+                exchange.sendResponseHeaders(200, responseBytes.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(responseBytes);
+                }
+            } else {
+                // 出现非200时，返回错误信息
+                System.err.println("Error: Received non-200 response from GitHub Copilot Embedding API.");
+                sendErrorResponse(exchange, responseCode,
+                        "Failed to get embeddings from Copilot API: " + responseBody);
             }
-        } else {
-            // Handle non-200 response
-            System.err.println("Error: Received non-200 response from GitHub Copilot Embedding API.");
-            // Read error stream
-            String errorResponse = readStream(connection.getErrorStream());
-            sendErrorResponse(exchange, responseCode, "Failed to get embeddings from Copilot API: " + errorResponse);
         }
     }
 
-
     /**
-     * Create and configure HttpURLConnection
+     * 使用 OkHttp 发起 POST 请求并返回 Response
      */
-    private HttpURLConnection createConnection(Map<String, String> headers, JSONObject jsonBody) throws IOException {
-        URL url = new URL(EmbeddingHandler.COPILOT_CHAT_EMBEDDINGS_URL);
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setRequestMethod("POST");
-        connection.setConnectTimeout(120000); // 120 seconds
-        connection.setReadTimeout(120000); // 120 seconds
-        connection.setDoOutput(true);
+    private Response executeOkHttpRequest(Map<String, String> headers, JSONObject jsonBody) throws IOException {
+        // 构造 RequestBody
+        RequestBody body = RequestBody.create(
+                jsonBody.toString(),
+                MediaType.parse("application/json; charset=utf-8")
+        );
 
-        // Set request headers
+        // 构造请求
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(COPILOT_CHAT_EMBEDDINGS_URL)
+                .post(body);
+
+        // 设置请求头
         for (Map.Entry<String, String> entry : headers.entrySet()) {
-            connection.setRequestProperty(entry.getKey(), entry.getValue());
+            requestBuilder.addHeader(entry.getKey(), entry.getValue());
         }
 
-        // Write request body
-        try (OutputStream os = connection.getOutputStream()) {
-            byte[] input = jsonBody.toString().getBytes(StandardCharsets.UTF_8);
-            os.write(input, 0, input.length);
-        }
+        Request request = requestBuilder.build();
 
-        return connection;
-    }
-
-    /**
-     * Read input stream content as a string
-     */
-    private String readStream(InputStream is) throws IOException {
-        if (is == null) return "";
-        BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            sb.append(line).append("\n");
-        }
-        reader.close();
-        return sb.toString();
+        // 同步调用
+        return okHttpClient.newCall(request).execute();
     }
 }
