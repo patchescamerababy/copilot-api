@@ -66,6 +66,41 @@ jobs:
         native-image-job-reports: 'true'
         architecture: ${{ matrix.arch }}
 
+    - name: Fix native-image.properties in source
+      run: |
+        # Check if the problematic file exists
+        NATIVE_IMAGE_PROPS_DIR=src/main/resources/META-INF/native-image
+        NATIVE_IMAGE_PROPS_FILE=$NATIVE_IMAGE_PROPS_DIR/native-image.properties
+        mkdir -p $NATIVE_IMAGE_PROPS_DIR
+        
+        # Create or overwrite the properties file with correct syntax
+        echo "# Native Image Properties" > $NATIVE_IMAGE_PROPS_FILE
+        echo "Args = --no-fallback \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      -J-Dsqlite.purejava=true \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      --initialize-at-run-time=com.sun.jna \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      --initialize-at-run-time=org.sqlite \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      --enable-url-protocols=http,https \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      -H:+JNI \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      -H:+AddAllCharsets \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      -H:+UnlockExperimentalVMOptions \\" >> $NATIVE_IMAGE_PROPS_FILE
+        echo "      -H:+ReportExceptionStackTraces" >> $NATIVE_IMAGE_PROPS_FILE
+        
+        # Create empty config files if they don't exist
+        CONFIG_FILES=("resource-config.json" "reflect-config.json" "jni-config.json" "proxy-config.json" "serialization-config.json")
+        for file in "${CONFIG_FILES[@]}"; do
+          if [ ! -f "$NATIVE_IMAGE_PROPS_DIR/$file" ]; then
+            if [[ "$file" == "resource-config.json" ]]; then
+              echo '{"resources":{"includes":[]}}' > "$NATIVE_IMAGE_PROPS_DIR/$file"
+            elif [[ "$file" == "serialization-config.json" ]]; then
+              echo '{"types":[],"lambdaCapturingTypes":[],"proxies":[]}' > "$NATIVE_IMAGE_PROPS_DIR/$file"
+            else
+              echo '[]' > "$NATIVE_IMAGE_PROPS_DIR/$file"
+            fi
+          fi
+        done
+        
+        cat $NATIVE_IMAGE_PROPS_FILE
+
     - name: Build with Maven
       run: |
         # Add the Maven Assembly Plugin to the build to avoid the "No plugin found for prefix 'assembly'" error
@@ -83,18 +118,6 @@ jobs:
           target/*-javadoc.jar
         retention-days: 5
 
-    - name: Prepare Config Files
-      if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
-      run: |
-        mkdir -p target/native-image-config
-        # Prepare configuration files if they don't exist in your project
-        [ -d "src/main/resources/META-INF/native-image" ] || mkdir -p src/main/resources/META-INF/native-image
-        [ -f "src/main/resources/META-INF/native-image/resource-config.json" ] || echo '{"resources":{"includes":[]}}' > src/main/resources/META-INF/native-image/resource-config.json
-        [ -f "src/main/resources/META-INF/native-image/reflect-config.json" ] || echo '[]' > src/main/resources/META-INF/native-image/reflect-config.json
-        [ -f "src/main/resources/META-INF/native-image/jni-config.json" ] || echo '[]' > src/main/resources/META-INF/native-image/jni-config.json
-        [ -f "src/main/resources/META-INF/native-image/proxy-config.json" ] || echo '[]' > src/main/resources/META-INF/native-image/proxy-config.json
-        [ -f "src/main/resources/META-INF/native-image/serialization-config.json" ] || echo '{"types":[],"lambdaCapturingTypes":[],"proxies":[]}' > src/main/resources/META-INF/native-image/serialization-config.json
-
     - name: Build Native Image (Windows)
       if: matrix.os == 'windows-latest'
       shell: cmd
@@ -103,20 +126,6 @@ jobs:
         copy target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target\native-image\Copilot-api.jar
         cd target\native-image
         native-image.cmd ^
-        --no-fallback ^
-        -J-Dsqlite.purejava=true ^
-        -H:+JNI ^
-        -H:+AddAllCharsets ^
-        -H:+UnlockExperimentalVMOptions ^
-        -H:+ReportExceptionStackTraces ^
-        -H:ResourceConfigurationFiles=../../src/main/resources/META-INF/native-image/resource-config.json ^
-        -H:ReflectionConfigurationFiles=../../src/main/resources/META-INF/native-image/reflect-config.json ^
-        -H:JNIConfigurationFiles=../../src/main/resources/META-INF/native-image/jni-config.json ^
-        -H:DynamicProxyConfigurationFiles=../../src/main/resources/META-INF/native-image/proxy-config.json ^
-        -H:SerializationConfigurationFiles=../../src/main/resources/META-INF/native-image/serialization-config.json ^
-        --initialize-at-run-time=com.sun.jna ^
-        --initialize-at-run-time=org.sqlite ^
-        --enable-url-protocols=http,https ^
         -jar Copilot-api.jar ^
         -H:Name=Java-Copilot-${{ matrix.label }}
 
@@ -128,20 +137,6 @@ jobs:
         cp target/*-with-dependencies.jar target/native-image/Copilot-api.jar
         cd target/native-image
         native-image \
-          --no-fallback \
-          -J-Dsqlite.purejava=true \
-          -H:+JNI \
-          -H:+AddAllCharsets \
-          -H:+UnlockExperimentalVMOptions \
-          -H:+ReportExceptionStackTraces \
-          -H:ResourceConfigurationFiles=../../src/main/resources/META-INF/native-image/resource-config.json \
-          -H:ReflectionConfigurationFiles=../../src/main/resources/META-INF/native-image/reflect-config.json \
-          -H:JNIConfigurationFiles=../../src/main/resources/META-INF/native-image/jni-config.json \
-          -H:DynamicProxyConfigurationFiles=../../src/main/resources/META-INF/native-image/proxy-config.json \
-          -H:SerializationConfigurationFiles=../../src/main/resources/META-INF/native-image/serialization-config.json \
-          --initialize-at-run-time=com.sun.jna \
-          --initialize-at-run-time=org.sqlite \
-          --enable-url-protocols=http,https \
           -jar Copilot-api.jar \
           -H:Name=Java-Copilot-${{ matrix.label }} \
           ${{ matrix.static == true && '--static' || '' }}
@@ -152,7 +147,6 @@ jobs:
         name: java-${{ matrix.label }}
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
-
 
 
   go-build:
