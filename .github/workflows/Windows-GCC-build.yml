@@ -80,7 +80,11 @@ jobs:
 
       - name: List Downloaded Files
         run: ls -la Copilot-api-Cpp-windows-x86_64-gcc
-
+        
+      - name: Set up date
+        id: date
+        run: echo "DATE=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+        
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
