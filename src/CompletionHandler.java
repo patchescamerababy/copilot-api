@@ -22,8 +22,8 @@ import java.util.stream.Collectors;
 public class CompletionHandler implements HttpHandler {
     private static String COPILOT_CHAT_COMPLETIONS_URL = "https://api.individual.githubcopilot.com/chat/completions";
 
-    private final ExecutorService executor = Executors.newFixedThreadPool(10);
-
+    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    
     private static final OkHttpClient okHttpClient = utils.getOkHttpClient();
 
     public static void setCopilotChatCompletionsUrl(String api) {
@@ -95,14 +95,16 @@ public class CompletionHandler implements HttpHandler {
                 JSONObject requestJson = new JSONObject(requestBody);
 
                 // Extract parameters
-                String model = requestJson.optString("model", requestJson.getString("model"));
+                String model = requestJson.getString("model");
                 boolean isStream = requestJson.optBoolean("stream", false);
 
                 // Build a new request JSON, adapting to the Copilot API
                 boolean isO1 = false;
-                if (model.startsWith("o1") || model.startsWith("o3")) {
+                System.out.println(model);
+                if (model.startsWith("o1")) {
                     System.out.println("stream: false");
                     isO1 = true;
+                    requestJson.put("stream", false);
                 } else {
                     requestJson.put("stream", isStream);
                 }
@@ -136,39 +138,25 @@ public class CompletionHandler implements HttpHandler {
                                                 String imageURL = imageUrlObj.getString("url");
                                                 if (!imageURL.startsWith("data:image/")) {
                                                     // 下载图像转为 base64
-                                                    try {
-                                                        java.net.URL urlObj = new java.net.URL(imageURL);
-
-                                                        java.net.HttpURLConnection imgConn = (java.net.HttpURLConnection) urlObj.openConnection();
-                                                        imgConn.setRequestMethod("GET");
-                                                        imgConn.setConnectTimeout(10000);
-                                                        imgConn.setReadTimeout(10000);
-                                                        int imgResponseCode = imgConn.getResponseCode();
-                                                        if (imgResponseCode == java.net.HttpURLConnection.HTTP_OK) {
-                                                            InputStream imageStream = imgConn.getInputStream();
-                                                            ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                                                            byte[] buffer = new byte[8192];
-                                                            int bytesRead;
-                                                            while ((bytesRead = imageStream.read(buffer)) != -1) {
-                                                                baos.write(buffer, 0, bytesRead);
-                                                            }
-                                                            imageStream.close();
-                                                            byte[] imageBytes = baos.toByteArray();
+                                                    Request imageRequest = new Request.Builder().url(imageURL).build();
+                                                    try (Response imageResponse = okHttpClient.newCall(imageRequest).execute()) {
+                                                        if (imageResponse.isSuccessful() && imageResponse.body() != null) {
+                                                            byte[] imageBytes = imageResponse.body().bytes();
                                                             String base64Image = Base64.getEncoder().encodeToString(imageBytes);
-                                                            // 获取图片的 MIME 类型
-                                                            String contentType = imgConn.getContentType();
+                                                            // 从响应中获取 MIME 类型，若不存在则使用默认值
+                                                            String contentType = imageResponse.header("Content-Type");
                                                             if (contentType == null || !contentType.startsWith("image/")) {
-                                                                contentType = "image/png"; // 默认类型
+                                                                contentType = "image/jpeg"; 
                                                             }
                                                             String dataUri = "data:" + contentType + ";base64," + base64Image;
-                                                            // 将 image_url 更新为 data URI 格式
                                                             imageUrlObj.put("url", dataUri);
                                                         } else {
-                                                            System.err.println("Failed to download image. Response code: " + imgResponseCode);
+                                                            System.err.println("Failed to download image. Response code: " + imageResponse.code());
                                                         }
                                                     } catch (Exception e) {
                                                         e.printStackTrace();
                                                     }
+
                                                 }
                                             }
                                         }
@@ -179,19 +167,19 @@ public class CompletionHandler implements HttpHandler {
                     }
                 }
 
-                // 准备 Headers
+                // Preparing Headers
                 Map<String, String> copilotHeaders = HeadersInfo.getCopilotHeaders();
                 copilotHeaders.put("openai-intent", "conversation-panel");
                 copilotHeaders.put("copilot-vision-request", hasImage ? "true" : "false");
                 copilotHeaders.put("Authorization", "Bearer " + receivedToken); // Update Token
-                System.out.println(requestJson.toString(4));
+//                System.out.println(requestJson.toString(4));
 
-                // 根据是否是流式返回，调用不同的方法
+                // Call different methods depending on whether it is a streaming return
                 if (isStream) {
                     if (!isO1) {
                         handleStreamResponse(exchange, copilotHeaders, requestJson);
                     } else {
-                        handleO1StreamResponse(exchange, copilotHeaders, requestJson);
+                        handleO1StreamResponse(exchange, copilotHeaders, requestJson); // Only O1 Series change requestJson
                     }
                 } else {
                     handleNormalResponse(exchange, copilotHeaders, requestJson);
@@ -205,7 +193,7 @@ public class CompletionHandler implements HttpHandler {
     }
 
     /**
-     * 适配 O1 流式响应的处理
+     * Adapting O1 streaming response processing
      */
     private void handleO1StreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) {
         try (Response response = executeOkHttpRequest(headers, requestJson)) {
@@ -231,7 +219,6 @@ public class CompletionHandler implements HttpHandler {
                 }
             }
 
-            // Build OpenAI API style response JSON
             JSONObject openAIResponse = new JSONObject();
             openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID());
             openAIResponse.put("object", "chat.completion");
@@ -254,8 +241,10 @@ public class CompletionHandler implements HttpHandler {
 
             openAIResponse.put("choices", choicesArray);
 
+            // 在响应 JSON 前添加 "data: " 前缀
+            String finalResponse = "data: " + openAIResponse.toString();
             exchange.getResponseHeaders().add("Content-Type", "application/json");
-            byte[] responseBytes = responseBody.getBytes(StandardCharsets.UTF_8);
+            byte[] responseBytes = finalResponse.getBytes(StandardCharsets.UTF_8);
             exchange.sendResponseHeaders(200, responseBytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
                 os.write(responseBytes);
@@ -267,14 +256,12 @@ public class CompletionHandler implements HttpHandler {
         }
     }
 
+
     /**
      * Handle stream response using OkHttp
      */
     private void handleStreamResponse(HttpExchange exchange, Map<String, String> headers, JSONObject requestJson) throws IOException {
-        // 先发起请求
-        Response response = null;
-        try {
-            response = executeOkHttpRequest(headers, requestJson);
+        try (Response response = executeOkHttpRequest(headers, requestJson)) {
             int responseCode = response.code();
 
             if (!response.isSuccessful()) {
@@ -288,66 +275,65 @@ public class CompletionHandler implements HttpHandler {
             exchange.getResponseHeaders().add("Connection", "keep-alive");
             exchange.sendResponseHeaders(200, 0);
 
-            // 读取 SSE 流
-            try (BufferedSource source = response.body().source();
-                 OutputStream os = exchange.getResponseBody()) {
-                while (!source.exhausted()) {
-                    String line = source.readUtf8LineStrict();
-                    if (line == null) {
-                        break;
-                    }
-                    if (line.startsWith("data: ")) {
-                        String data = line.substring(6).trim();
-                        if (data.equals("[DONE]")) {
-                            os.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                            os.flush();
-                            break;
-                        }
-                        try {
-                            JSONObject sseJson = new JSONObject(data);
-                            // Check if it contains 'choices' array
-                            if (sseJson.has("choices")) {
-                                JSONArray choices = sseJson.getJSONArray("choices");
-                                for (int i = 0; i < choices.length(); i++) {
-                                    JSONObject choice = choices.getJSONObject(i);
-                                    JSONObject delta = choice.optJSONObject("delta");
-                                    if (delta != null && delta.has("content")) {
-                                        String content = delta.optString("content", "");
-                                        // 只处理非空内容
-                                        if (!content.isEmpty()) {
-                                            // 构造新的 SSE JSON
-                                            JSONObject newSseJson = new JSONObject();
-                                            JSONArray newChoices = new JSONArray();
-                                            JSONObject newChoice = new JSONObject();
-                                            newChoice.put("index", choice.optInt("index", i));
+            // Reading SSE Streams
+            if (response.body() != null) {
+                try (BufferedSource source = response.body().source();
+                     OutputStream os = exchange.getResponseBody()) {
+                    while (!source.exhausted()) {
+                        String line = source.readUtf8LineStrict();
+                        if (line.startsWith("data: ")) {
+                            String data = line.substring(6).trim();
+                            if (data.equals("[DONE]")) {
+                                os.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                                os.flush();
+                                break;
+                            }
+                            try {
+                                JSONObject sseJson = new JSONObject(data);
+                                // Check if it contains 'choices' array
+                                if (sseJson.has("choices")) {
+                                    JSONArray choices = sseJson.getJSONArray("choices");
+                                    for (int i = 0; i < choices.length(); i++) {
+                                        JSONObject choice = choices.getJSONObject(i);
+                                        JSONObject delta = choice.optJSONObject("delta");
+                                        if (delta != null && delta.has("content")) {
+                                            String content = delta.optString("content", "");
+                                            // 只处理非空内容
+                                            if (!content.isEmpty()) {
+                                                // 构造新的 SSE JSON
+                                                JSONObject newSseJson = new JSONObject();
+                                                JSONArray newChoices = new JSONArray();
+                                                JSONObject newChoice = new JSONObject();
+                                                newChoice.put("index", choice.optInt("index", i));
 
-                                            JSONObject newDelta = new JSONObject();
-                                            newDelta.put("content", content);
-                                            System.out.print(content);
-                                            newChoice.put("delta", newDelta);
+                                                JSONObject newDelta = new JSONObject();
+                                                newDelta.put("content", content);
+                                                System.out.print(content);
+                                                newChoice.put("delta", newDelta);
 
-                                            newChoices.put(newChoice);
-                                            newSseJson.put("choices", newChoices);
+                                                newChoices.put(newChoice);
+                                                newSseJson.put("choices", newChoices);
 
-                                            newSseJson.put("created", sseJson.optLong("created",
-                                                    Instant.now().getEpochSecond()));
-                                            newSseJson.put("id", sseJson.optString("id",
-                                                    UUID.randomUUID().toString()));
-                                            newSseJson.put("model", sseJson.optString("model",
-                                                    requestJson.optString("model")));
-                                            newSseJson.put("system_fingerprint", sseJson.optString("system_fingerprint",
-                                                    "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
+                                                newSseJson.put("created", sseJson.optLong("created",
+                                                        Instant.now().getEpochSecond()));
+                                                newSseJson.put("id", sseJson.optString("id",
+                                                        UUID.randomUUID().toString()));
+                                                newSseJson.put("model", sseJson.optString("model",
+                                                        requestJson.optString("model")));
+                                                newSseJson.put("system_fingerprint", sseJson.optString("system_fingerprint",
+                                                        "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
 
-                                            // 构造 SSE line
-                                            String newSseLine = "data: " + newSseJson + "\n\n";
-                                            os.write(newSseLine.getBytes(StandardCharsets.UTF_8));
-                                            os.flush();
+                                                // 构造 SSE line
+                                                String newSseLine = "data: " + newSseJson + "\n\n";
+                                                os.write(newSseLine.getBytes(StandardCharsets.UTF_8));
+                                                os.flush();
+                                            }
                                         }
                                     }
                                 }
+                            } catch (JSONException e) {
+                                System.err.println("JSON parsing error: " + e.getMessage());
                             }
-                        } catch (JSONException e) {
-                            System.err.println("JSON parsing error: " + e.getMessage());
                         }
                     }
                 }
@@ -355,10 +341,6 @@ public class CompletionHandler implements HttpHandler {
         } catch (IOException e) {
             e.printStackTrace();
             utils.sendError(exchange, "Failed to send response: " + e.getMessage(), 502);
-        } finally {
-            if (response != null) {
-                response.close();
-            }
         }
     }
 
