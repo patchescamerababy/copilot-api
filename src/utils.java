@@ -57,14 +57,22 @@ public class utils {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             sslContext.init(null, new TrustManager[]{trustAllCertificates}, null);
 
-            // 创建代理
-
             //Proxy proxy = getSystemProxy();
-
+            // 如果需要代理认证
+//            Authenticator proxyAuthenticator = new Authenticator() {
+//                @Override
+//                public Request authenticate(Route route, Response response) throws IOException {
+//                    String credential = Credentials.basic("username", "password");
+//                    return response.request().newBuilder()
+//                            .header("Proxy-Authorization", credential)
+//                            .build();
+//                }
+//            };
 
             // 创建 OkHttpClient
             okHttpClient1 = new OkHttpClient.Builder()
                     //.proxy(proxy)  // 设置代理
+//                    .proxyAuthenticator(proxyAuthenticator)  // 如果需要代理认证
                     .sslSocketFactory(sslContext.getSocketFactory(), trustAllCertificates)  // 设置 SSL
                     .hostnameVerifier(new HostnameVerifier() {
                         @Override
@@ -80,8 +88,8 @@ public class utils {
             throw new RuntimeException("OkHttpClient 初始化失败", e);
         }
         return okHttpClient1;
-    }
-    /*public static Proxy getSystemProxy() {
+    }/*
+    public static Proxy getSystemProxy() {
         String os = System.getProperty("os.name").toLowerCase();
         Proxy proxy = Proxy.NO_PROXY;
 
@@ -179,7 +187,7 @@ public class utils {
             System.err.println("Error while getting system proxy: " + e.getMessage());
         }
         return proxy;
-    }*/
+    }
 
     private static Proxy parseProxyFromString(String proxyString) {
         proxyString = proxyString.trim().toLowerCase();
@@ -208,7 +216,7 @@ public class utils {
         }
 
         throw new IllegalArgumentException("Invalid proxy configuration");
-    }
+    }*/
 
 
     public static <jsonObject> String GetToken(String longTermToken) {
@@ -344,54 +352,51 @@ public class utils {
                 return null;
             }
 
-            if (!(longTermToken.startsWith("ghu") || longTermToken.startsWith("gho"))) {
-                utils.sendError(exchange, "Invalid token prefix.", 401);
-                return null;
-            }
-            AtomicReference<String> login= new AtomicReference<>("");
-            CompletableFuture.runAsync(() -> {
-                try {
-                    Request request = new Request.Builder()
-                            .url("https://api.github.com/user")
-                            .addHeader("Authorization", "Bearer " + longTermToken)
-                            .addHeader("Accept", "application/vnd.github+json")
-                            .addHeader("Editor-Version", HeadersInfo.editor_version)
-                            .addHeader("user-agent", HeadersInfo.user_agent)
-                            .addHeader("x-github-api-version", "2022-11-28")
-                            .addHeader("Sec-Fetch-Site", "none")
-                            .addHeader("Sec-Fetch-Mode", "no-cors")
-                            .addHeader("Sec-Fetch-Dest", "empty")
-                            .get()
-                            .build();
-
-                    Response response = client.newCall(request).execute();
-                    if (response.isSuccessful()) {
-                        String responseBody = null;
-                        if (response.body() != null) {
-                            responseBody = response.body().string();
-                        }
-                        JSONObject jsonObject = null;
-                        if (responseBody != null) {
-                            jsonObject = new JSONObject(responseBody);
-                        }
-                        if (jsonObject != null && jsonObject.has("login")) {
-                            login.set(jsonObject.getString("login"));
-                            System.out.println("\nlogin as: " + login);
-                        }
-                    } else {
-                        String errorResponse = null;
-                        if (response.body() != null) {
-                            errorResponse = response.body().string();
-                        }
-                        System.out.println("Request failed, status code: " + response.code());
-                        System.out.println("Response body: " + errorResponse);
-                    }
-                } catch (IOException ioException) {
-                    ioException.printStackTrace();
-                }
-            }, Executors.newSingleThreadScheduledExecutor());
 
             if (!tokenManager.isLongTermTokenExists(longTermToken)) {
+                AtomicReference<String> login= new AtomicReference<>("");
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        Request request = new Request.Builder()
+                                .url("https://api.github.com/user")
+                                .addHeader("Authorization", "Bearer " + longTermToken)
+                                .addHeader("Accept", "application/vnd.github+json")
+                                .addHeader("Editor-Version", HeadersInfo.editor_version)
+                                .addHeader("user-agent", HeadersInfo.user_agent)
+                                .addHeader("x-github-api-version", "2022-11-28")
+                                .addHeader("Sec-Fetch-Site", "none")
+                                .addHeader("Sec-Fetch-Mode", "no-cors")
+                                .addHeader("Sec-Fetch-Dest", "empty")
+                                .get()
+                                .build();
+
+
+                        Response response = client.newCall(request).execute();
+                        if (response.isSuccessful()) {
+                            String responseBody = null;
+                            if (response.body() != null) {
+                                responseBody = response.body().string();
+                            }
+                            JSONObject jsonObject = null;
+                            if (responseBody != null) {
+                                jsonObject = new JSONObject(responseBody);
+                            }
+                            if (jsonObject != null && jsonObject.has("login")) {
+                                login.set(jsonObject.getString("login"));
+                                System.out.println("\nlogin as: " + login);
+                            }
+                        } else {
+                            String errorResponse = null;
+                            if (response.body() != null) {
+                                errorResponse = response.body().string();
+                            }
+                            System.out.println("Request failed, status code: " + response.code());
+                            System.out.println("Response body: " + errorResponse);
+                        }
+                    } catch (IOException ioException) {
+                        ioException.printStackTrace();
+                    }
+                }, Executors.newSingleThreadScheduledExecutor());
                 String newTempToken = utils.GetToken(longTermToken);
                 if (newTempToken == null || newTempToken.isEmpty()) {
                     sendError(exchange, "Unable to generate a new temporary token.", 500);
@@ -419,41 +424,5 @@ public class utils {
             return null;
         }
         return tempToken;
-    }
-
-    public static byte[] decodeImageData(String dataUrl) {
-        try {
-            String[] parts = dataUrl.split(",");
-            if (parts.length != 2) {
-                System.err.println("Invalid data URL format.");
-                return null;
-            }
-            String base64Data = parts[1];
-            return java.util.Base64.getDecoder().decode(base64Data);
-        } catch (IllegalArgumentException e) {
-            System.err.println("Base64 decode failed: " + e.getMessage());
-            return null;
-        }
-    }
-
-    public static byte[] downloadImageData(String imageUrl) {
-        try {
-            Request request = new Request.Builder()
-                    .url(imageUrl)
-                    .get()
-                    .build();
-
-            try (Response response = client.newCall(request).execute()) {
-                if (!response.isSuccessful()) {
-                    System.err.println("Failed to download image, response code: " + response.code());
-                    return null;
-                }
-
-                return response.body().bytes();
-            }
-        } catch (IOException e) {
-            System.err.println("Failed to download image: " + e.getMessage());
-            return null;
-        }
     }
 }
