@@ -75,14 +75,14 @@ jobs:
       shell: bash
       run: |
         # 使用 timeout 命令发送 SIGINT（模拟 Ctrl+C），运行 5 秒后中断
-        timeout --signal=SIGINT 5s java -agentlib:native-image-agent=config-output-dir=./config -jar target/CopilotSpringNative-0.0.1-SNAPSHOT.jar 1024 || true
+        timeout --signal=SIGINT 5s java -agentlib:native-image-agent=config-output-dir=./config -jar target/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar 1024 || true
 
     - name: Generate Native Image Config (Windows)
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
         # 在 Windows 下启动进程，等待 5 秒后结束进程（模拟 Ctrl+C）
-        $process = Start-Process -FilePath "java" -ArgumentList "-agentlib:native-image-agent=config-output-dir=./config -jar target\CopilotSpringNative-0.0.1-SNAPSHOT.jar 8080" -PassThru
+        $process = Start-Process -FilePath "java" -ArgumentList "-agentlib:native-image-agent=config-output-dir=./config -jar target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar 8080" -PassThru
         Start-Sleep -Seconds 5
         Stop-Process -Id $process.Id
 
