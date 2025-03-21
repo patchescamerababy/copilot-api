@@ -70,14 +70,13 @@ jobs:
       run: |
         mvn -B clean package org.apache.maven.plugins:maven-assembly-plugin:3.6.0:single --file pom.xml
 
-
     - name: Build Native Image (Windows)
       if: matrix.os == 'windows-latest'
       shell: cmd
       run: |
         mkdir target\native-image
         copy target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target\native-image\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
-        xcopy config target\native-image\config /E /I
+        xcopy src\config target\native-image\config /E /I
         cd target\native-image
         native-image.cmd ^
           --no-fallback ^
@@ -102,7 +101,7 @@ jobs:
       run: |
         mkdir -p target/native-image
         cp target/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target/native-image/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
-        cp -r config target/native-image/config
+        cp -r src/config target/native-image/config
         cd target/native-image
         native-image \
           --no-fallback \
@@ -140,6 +139,7 @@ jobs:
         name: java-${{ matrix.label }}
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
+
 
 
 
