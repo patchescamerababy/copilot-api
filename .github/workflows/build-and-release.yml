@@ -70,21 +70,32 @@ jobs:
       run: |
         mvn -B clean package org.apache.maven.plugins:maven-assembly-plugin:3.6.0:single --file pom.xml
 
-    - name: Generate Native Image Config (Linux/MacOS)
+    # 提取 JAR 中的 native-image.properties 并修正错误配置
+    - name: Extract and Fix native-image.properties (Linux/MacOS)
       if: matrix.os != 'windows-latest'
-      shell: bash
       run: |
-        # 使用 timeout 命令发送 SIGINT（模拟 Ctrl+C），运行 5 秒后中断
-        timeout --signal=SIGINT 5s java -agentlib:native-image-agent=config-output-dir=./config -jar target/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar 1024 || true
+        mkdir -p config
+        echo "Extracting native-image.properties from JAR..."
+        unzip -p target/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar META-INF/native-image/native-image.properties > config/native-image.properties || true
+        echo "Fixing native-image.properties..."
+        sed -i 's/--initialize-at-run-time=com.sun.jna,org.sqlite/--initialize-at-run-time=com.sun.jna --initialize-at-run-time=org.sqlite/' config/native-image.properties
+        echo "Removing native-image.properties from JAR..."
+        zip -d target/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar META-INF/native-image/native-image.properties || true
 
-    - name: Generate Native Image Config (Windows)
+    - name: Extract and Fix native-image.properties (Windows)
       if: matrix.os == 'windows-latest'
       shell: pwsh
       run: |
-        # 在 Windows 下启动进程，等待 5 秒后结束进程（模拟 Ctrl+C）
-        $process = Start-Process -FilePath "java" -ArgumentList "-agentlib:native-image-agent=config-output-dir=./config -jar target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar 8080" -PassThru
-        Start-Sleep -Seconds 5
-        Stop-Process -Id $process.Id
+        New-Item -ItemType Directory -Force -Path config
+        Write-Output "Extracting native-image.properties from JAR..."
+        # 使用 Expand-Archive 将 JAR 文件解压到临时目录，然后复制需要的文件
+        Expand-Archive -Path target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar -DestinationPath tempJar -Force
+        Copy-Item -Path "tempJar\META-INF\native-image\native-image.properties" -Destination config\native-image.properties -Force
+        Remove-Item -Recurse -Force tempJar
+        Write-Output "Fixing native-image.properties..."
+        (Get-Content config\native-image.properties) -replace '--initialize-at-run-time=com.sun.jna,org.sqlite', '--initialize-at-run-time=com.sun.jna --initialize-at-run-time=org.sqlite' | Set-Content config\native-image.properties
+        Write-Output "Removing native-image.properties from JAR..."
+        & zip -d target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar META-INF/native-image/native-image.properties
 
     - name: Build Native Image (Windows)
       if: matrix.os == 'windows-latest'
