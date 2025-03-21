@@ -72,8 +72,8 @@ jobs:
 
     - name: Generate Native Image Config
       run: |
-        # 运行生成 native-image 配置的命令，生成 config 目录，然后直接退出
-        java -agentlib:native-image-agent=config-output-dir=./config -jar target/Copilot2API.jar
+
+        java -agentlib:native-image-agent=config-output-dir=./config -jar target/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
 
     - name: Build Native Image (Windows)
       if: matrix.os == 'windows-latest'
