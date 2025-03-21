@@ -206,48 +206,59 @@ public class CompletionHandler implements HttpHandler {
             }
 
             String responseBody = response.body() != null ? response.body().string() : "";
-            JSONObject responseJson = new JSONObject(responseBody);
-            JSONArray choices = responseJson.optJSONArray("choices");
+
+            JSONObject apiResponse = new JSONObject(responseBody);
             String assistantContent = "";
-            if (choices != null && !choices.isEmpty()) {
-                JSONObject firstChoice = choices.getJSONObject(0);
-                if (firstChoice.has("message")) {
-                    JSONObject message = firstChoice.getJSONObject("message");
-                    if (!message.isNull("content")) {
-                        assistantContent = message.optString("content", "");
+            if (apiResponse.has("choices") && !apiResponse.isNull("choices")) {
+                JSONArray choices = apiResponse.getJSONArray("choices");
+                for (int i = 0; i < choices.length(); i++) {
+                    JSONObject choice = choices.getJSONObject(i);
+                    JSONObject message = choice.optJSONObject("message",choice.optJSONObject("Message"));
+                    if ("assistant".equalsIgnoreCase(message.optString("role", ""))) {
+                        assistantContent = message.optString("content", "").trim();
+                        break;
                     }
                 }
             }
+            
+            Headers responseHeaders = exchange.getResponseHeaders();
+            responseHeaders.add("Content-Type", "text/event-stream; charset=utf-8");
+            responseHeaders.add("Cache-Control", "no-cache");
+            responseHeaders.add("Connection", "keep-alive");
+            exchange.sendResponseHeaders(200, 0);
 
-            JSONObject openAIResponse = new JSONObject();
-            openAIResponse.put("id", "chatcmpl-" + UUID.randomUUID());
-            openAIResponse.put("object", "chat.completion");
-            openAIResponse.put("created", Instant.now().getEpochSecond());
-            openAIResponse.put("model", responseJson.optString("model", "o1"));
-            openAIResponse.put("system_fingerprint", openAIResponse.optString("system_fingerprint",
-                    "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
-
-            JSONArray choicesArray = new JSONArray();
-            JSONObject choiceObject = new JSONObject();
-            choiceObject.put("index", 0);
-
-            JSONObject messageObject = new JSONObject();
-            messageObject.put("role", "assistant");
-            messageObject.put("content", assistantContent);
-            System.out.println("Received: \n" + assistantContent);
-            choiceObject.put("message", messageObject);
-            choiceObject.put("finish_reason", "stop");
-            choicesArray.put(choiceObject);
-
-            openAIResponse.put("choices", choicesArray);
-
-            // 在响应 JSON 前添加 "data: " 前缀
-            String finalResponse = "data: " + openAIResponse.toString();
-            exchange.getResponseHeaders().add("Content-Type", "application/json");
-            byte[] responseBytes = finalResponse.getBytes(StandardCharsets.UTF_8);
-            exchange.sendResponseHeaders(200, responseBytes.length);
             try (OutputStream os = exchange.getResponseBody()) {
-                os.write(responseBytes);
+                JSONObject sseJson = new JSONObject();
+                JSONArray choicesArray = new JSONArray();
+
+                JSONObject choiceObj = new JSONObject();
+                choiceObj.put("index", 0);
+                JSONObject contentFilterResults = new JSONObject();
+                contentFilterResults.put("error", new JSONObject().put("code", "").put("message", ""));
+                contentFilterResults.put("hate", new JSONObject().put("filtered", false).put("severity", "safe"));
+                contentFilterResults.put("self_harm", new JSONObject().put("filtered", false).put("severity", "safe"));
+                contentFilterResults.put("sexual", new JSONObject().put("filtered", false).put("severity", "safe"));
+                contentFilterResults.put("violence", new JSONObject().put("filtered", false).put("severity", "safe"));
+                choiceObj.put("content_filter_results", contentFilterResults);
+
+                JSONObject delta = new JSONObject();
+                delta.put("content", assistantContent);
+                choiceObj.put("delta", delta);
+
+                choicesArray.put(choiceObj);
+                sseJson.put("choices", choicesArray);
+
+                sseJson.put("created", apiResponse.optLong("created", Instant.now().getEpochSecond()));
+                sseJson.put("id", apiResponse.optString("id", ""));
+                sseJson.put("model", apiResponse.optString("model", requestJson.optString("model")));
+                sseJson.put("system_fingerprint",apiResponse.optString("apiResponse","fp_"+UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
+                String sseLine = "data: " + sseJson.toString() + "\n\n";
+                os.write(sseLine.getBytes(StandardCharsets.UTF_8));
+                os.flush();
+
+                String doneLine = "data: [DONE]\n\n";
+                os.write(doneLine.getBytes(StandardCharsets.UTF_8));
+                os.flush();
             }
 
         } catch (Exception e) {
@@ -255,6 +266,7 @@ public class CompletionHandler implements HttpHandler {
             utils.sendError(exchange, "Error occurred while processing response: " + e.getMessage(), 500);
         }
     }
+
 
 
     /**
