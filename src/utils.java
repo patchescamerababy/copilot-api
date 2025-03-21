@@ -59,12 +59,12 @@ public class utils {
             sslContext.init(null, new TrustManager[]{trustAllCertificates}, null);
 
 
-//            Proxy proxy = getSystemProxy();
+            Proxy proxy = getSystemProxy();
 
 
             // 创建 OkHttpClient
             okHttpClient = new OkHttpClient.Builder()
-//                    .proxy(proxy)  // 设置代理
+                    .proxy(proxy)  // 设置代理
 
                     .sslSocketFactory(sslContext.getSocketFactory(), trustAllCertificates)  // 设置 SSL
                     .hostnameVerifier((hostname, session) -> {
@@ -79,7 +79,7 @@ public class utils {
         }
         return okHttpClient;
     }
-    /*
+    
     public static Proxy getSystemProxy() {
         String os = System.getProperty("os.name").toLowerCase();
         Proxy proxy = Proxy.NO_PROXY;
@@ -207,7 +207,7 @@ public class utils {
         }
 
         throw new IllegalArgumentException("Invalid proxy configuration");
-    }*/
+    }
 
 
     public static <jsonObject> String GetToken(String longTermToken) {
