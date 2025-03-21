@@ -32,8 +32,9 @@ public class utils {
     public static OkHttpClient getOkHttpClient() {
         return client;
     }
+    
     private static OkHttpClient createOkHttpClient() {
-        OkHttpClient okHttpClient1 = null;
+        OkHttpClient okHttpClient = null;
         try {
             // 创建一个不验证证书的 TrustManager
             final X509TrustManager trustAllCertificates = new X509TrustManager() {
@@ -57,38 +58,28 @@ public class utils {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             sslContext.init(null, new TrustManager[]{trustAllCertificates}, null);
 
-            //Proxy proxy = getSystemProxy();
-            // 如果需要代理认证
-//            Authenticator proxyAuthenticator = new Authenticator() {
-//                @Override
-//                public Request authenticate(Route route, Response response) throws IOException {
-//                    String credential = Credentials.basic("username", "password");
-//                    return response.request().newBuilder()
-//                            .header("Proxy-Authorization", credential)
-//                            .build();
-//                }
-//            };
+
+//            Proxy proxy = getSystemProxy();
+
 
             // 创建 OkHttpClient
-            okHttpClient1 = new OkHttpClient.Builder()
-                    //.proxy(proxy)  // 设置代理
-//                    .proxyAuthenticator(proxyAuthenticator)  // 如果需要代理认证
+            okHttpClient = new OkHttpClient.Builder()
+//                    .proxy(proxy)  // 设置代理
+
                     .sslSocketFactory(sslContext.getSocketFactory(), trustAllCertificates)  // 设置 SSL
-                    .hostnameVerifier(new HostnameVerifier() {
-                        @Override
-                        public boolean verify(String hostname, SSLSession session) {
-                            return true;  // 不验证主机名
-                        }
+                    .hostnameVerifier((hostname, session) -> {
+                        return true;  // 不验证主机名
                     })
-                    .connectTimeout(30, TimeUnit.SECONDS)  // 连接超时
-                    .readTimeout(30, TimeUnit.SECONDS)     // 读取超时
-                    .writeTimeout(30, TimeUnit.SECONDS)    // 写入超时
+                    .connectTimeout(600, TimeUnit.SECONDS)  // 连接超时
+                    .readTimeout(600, TimeUnit.SECONDS)     // 读取超时
+                    .writeTimeout(600, TimeUnit.SECONDS)    // 写入超时
                     .build();
         } catch (Exception e) {
             throw new RuntimeException("OkHttpClient 初始化失败", e);
         }
-        return okHttpClient1;
-    }/*
+        return okHttpClient;
+    }
+    /*
     public static Proxy getSystemProxy() {
         String os = System.getProperty("os.name").toLowerCase();
         Proxy proxy = Proxy.NO_PROXY;
