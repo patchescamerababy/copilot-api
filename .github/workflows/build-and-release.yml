@@ -66,84 +66,65 @@ jobs:
         native-image-job-reports: 'true'
         architecture: ${{ matrix.arch }}
 
-    - name: Fix native-image.properties (Linux/MacOS)
+    - name: Build with Maven
+      run: |
+        mvn -B clean package org.apache.maven.plugins:maven-assembly-plugin:3.6.0:single --file pom.xml
+
+    - name: Generate Native Image Config
+      run: |
+        # 运行生成 native-image 配置的命令，生成 config 目录，然后直接退出
+        java -agentlib:native-image-agent=config-output-dir=./config -jar target/Copilot2API.jar
+
+    - name: Build Native Image (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: cmd
+      run: |
+        mkdir target\native-image
+        copy target\Copilot2API.jar target\native-image\Copilot2API.jar
+        xcopy config target\native-image\config /E /I
+        cd target\native-image
+        native-image.cmd ^
+          --no-fallback ^
+          -J-Dsqlite.purejava=true ^
+          --initialize-at-run-time=com.sun.jna,org.sqlite ^
+          --enable-url-protocols=http,https ^
+          -H:+JNI ^
+          -H:+AddAllCharsets ^
+          -H:+UnlockExperimentalVMOptions ^
+          -H:+ReportExceptionStackTraces ^
+          -H:ResourceConfigurationFiles=config/resource-config.json ^
+          -H:ReflectionConfigurationFiles=config/reflect-config.json ^
+          -H:JNIConfigurationFiles=config/jni-config.json ^
+          -H:DynamicProxyConfigurationFiles=config/proxy-config.json ^
+          -H:SerializationConfigurationFiles=config/serialization-config.json ^
+          -jar Copilot2API.jar ^
+          -H:Name=Java-Copilot-${{ matrix.label }}
+
+    - name: Build Native Image (Linux/MacOS)
       if: matrix.os != 'windows-latest'
       shell: bash
       run: |
-        # Check if the problematic file exists
-        NATIVE_IMAGE_PROPS_DIR=src/main/resources/META-INF/native-image
-        NATIVE_IMAGE_PROPS_FILE=$NATIVE_IMAGE_PROPS_DIR/native-image.properties
-        mkdir -p $NATIVE_IMAGE_PROPS_DIR
-        
-        # Create or overwrite the properties file with correct syntax
-        echo "# Native Image Properties" > $NATIVE_IMAGE_PROPS_FILE
-        echo "Args = --no-fallback \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      -J-Dsqlite.purejava=true \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      --initialize-at-run-time=com.sun.jna \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      --initialize-at-run-time=org.sqlite \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      --enable-url-protocols=http,https \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      -H:+JNI \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      -H:+AddAllCharsets \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      -H:+UnlockExperimentalVMOptions \\" >> $NATIVE_IMAGE_PROPS_FILE
-        echo "      -H:+ReportExceptionStackTraces" >> $NATIVE_IMAGE_PROPS_FILE
-        
-        # Create empty config files if they don't exist
-        CONFIG_FILES=("resource-config.json" "reflect-config.json" "jni-config.json" "proxy-config.json" "serialization-config.json")
-        for file in "${CONFIG_FILES[@]}"; do
-          if [ ! -f "$NATIVE_IMAGE_PROPS_DIR/$file" ]; then
-            if [[ "$file" == "resource-config.json" ]]; then
-              echo '{"resources":{"includes":[]}}' > "$NATIVE_IMAGE_PROPS_DIR/$file"
-            elif [[ "$file" == "serialization-config.json" ]]; then
-              echo '{"types":[],"lambdaCapturingTypes":[],"proxies":[]}' > "$NATIVE_IMAGE_PROPS_DIR/$file"
-            else
-              echo '[]' > "$NATIVE_IMAGE_PROPS_DIR/$file"
-            fi
-          fi
-        done
-        
-        cat $NATIVE_IMAGE_PROPS_FILE
-
-    - name: Fix native-image.properties (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: pwsh
-      run: |
-        # Check if the problematic file exists
-        $NATIVE_IMAGE_PROPS_DIR = "src\main\resources\META-INF\native-image"
-        $NATIVE_IMAGE_PROPS_FILE = "$NATIVE_IMAGE_PROPS_DIR\native-image.properties"
-        New-Item -Path $NATIVE_IMAGE_PROPS_DIR -ItemType Directory -Force
-        
-        # Create or overwrite the properties file with correct syntax
-        "# Native Image Properties" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8
-        "Args = --no-fallback \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      -J-Dsqlite.purejava=true \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      --initialize-at-run-time=com.sun.jna \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      --initialize-at-run-time=org.sqlite \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      --enable-url-protocols=http,https \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      -H:+JNI \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      -H:+AddAllCharsets \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      -H:+UnlockExperimentalVMOptions \" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        "      -H:+ReportExceptionStackTraces" | Out-File -FilePath $NATIVE_IMAGE_PROPS_FILE -Encoding utf8 -Append
-        
-        # Create empty config files if they don't exist
-        $CONFIG_FILES = @("resource-config.json", "reflect-config.json", "jni-config.json", "proxy-config.json", "serialization-config.json")
-        foreach ($file in $CONFIG_FILES) {
-          if (-Not (Test-Path "$NATIVE_IMAGE_PROPS_DIR\$file")) {
-            if ($file -eq "resource-config.json") {
-              '{"resources":{"includes":[]}}' | Out-File -FilePath "$NATIVE_IMAGE_PROPS_DIR\$file" -Encoding utf8
-            } elseif ($file -eq "serialization-config.json") {
-              '{"types":[],"lambdaCapturingTypes":[],"proxies":[]}' | Out-File -FilePath "$NATIVE_IMAGE_PROPS_DIR\$file" -Encoding utf8
-            } else {
-              '[]' | Out-File -FilePath "$NATIVE_IMAGE_PROPS_DIR\$file" -Encoding utf8
-            }
-          }
-        }
-        
-        Get-Content $NATIVE_IMAGE_PROPS_FILE
-
-    - name: Build with Maven
-      run: |
-        # Add the Maven Assembly Plugin to the build to avoid the "No plugin found for prefix 'assembly'" error
-        mvn -B clean package org.apache.maven.plugins:maven-assembly-plugin:3.6.0:single --file pom.xml
+        mkdir -p target/native-image
+        cp target/Copilot2API.jar target/native-image/Copilot2API.jar
+        cp -r config target/native-image/config
+        cd target/native-image
+        native-image \
+          --no-fallback \
+          -J-Dsqlite.purejava=true \
+          --initialize-at-run-time=com.sun.jna,org.sqlite \
+          --enable-url-protocols=http,https \
+          -H:+JNI \
+          -H:+AddAllCharsets \
+          -H:+UnlockExperimentalVMOptions \
+          -H:+ReportExceptionStackTraces \
+          -H:ResourceConfigurationFiles=config/resource-config.json \
+          -H:ReflectionConfigurationFiles=config/reflect-config.json \
+          -H:JNIConfigurationFiles=config/jni-config.json \
+          -H:DynamicProxyConfigurationFiles=config/proxy-config.json \
+          -H:SerializationConfigurationFiles=config/serialization-config.json \
+          -jar Copilot2API.jar \
+          -H:Name=Java-Copilot-${{ matrix.label }} \
+          ${{ matrix.static == true && '--static' || '' }}
 
     - name: Upload JAR Artifacts
       if: matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64'
@@ -157,35 +138,13 @@ jobs:
           target/*-javadoc.jar
         retention-days: 5
 
-    - name: Build Native Image (Windows)
-      if: matrix.os == 'windows-latest'
-      shell: cmd
-      run: |
-        mkdir target\native-image
-        copy target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target\native-image\Copilot-api.jar
-        cd target\native-image
-        native-image.cmd ^
-        -jar Copilot-api.jar ^
-        -H:Name=Java-Copilot-${{ matrix.label }}
-
-    - name: Build Native Image (Linux/MacOS)
-      if: matrix.os != 'windows-latest'
-      shell: bash
-      run: |
-        mkdir -p target/native-image
-        cp target/*-with-dependencies.jar target/native-image/Copilot-api.jar
-        cd target/native-image
-        native-image \
-          -jar Copilot-api.jar \
-          -H:Name=Java-Copilot-${{ matrix.label }} \
-          ${{ matrix.static == true && '--static' || '' }}
-
     - name: Upload Native Build
       uses: actions/upload-artifact@v4
       with:
         name: java-${{ matrix.label }}
         path: target/native-image/Java-Copilot-${{ matrix.label }}${{ matrix.os == 'windows-latest' && '.exe' || '' }}
         retention-days: 5
+
 
 
 
