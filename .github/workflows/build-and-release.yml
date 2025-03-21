@@ -141,7 +141,6 @@ jobs:
           -H:+ReportExceptionStackTraces \
           -H:ResourceConfigurationFiles=config/resource-config.json \
           -H:ReflectionConfigurationFiles=config/reflect-config.json \
-          -H:JNIConfigurationFiles=config/jni-config.json \
           -H:DynamicProxyConfigurationFiles=config/proxy-config.json \
           -H:SerializationConfigurationFiles=config/serialization-config.json \
           -jar Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar \
