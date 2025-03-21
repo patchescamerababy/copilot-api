@@ -206,21 +206,21 @@ public class CompletionHandler implements HttpHandler {
             }
 
             String responseBody = response.body() != null ? response.body().string() : "";
-
             JSONObject apiResponse = new JSONObject(responseBody);
             String assistantContent = "";
             if (apiResponse.has("choices") && !apiResponse.isNull("choices")) {
                 JSONArray choices = apiResponse.getJSONArray("choices");
                 for (int i = 0; i < choices.length(); i++) {
                     JSONObject choice = choices.getJSONObject(i);
-                    JSONObject message = choice.optJSONObject("message",choice.optJSONObject("Message"));
+                    JSONObject message = choice.optJSONObject("message", choice.optJSONObject("Message"));
                     if ("assistant".equalsIgnoreCase(message.optString("role", ""))) {
                         assistantContent = message.optString("content", "").trim();
                         break;
                     }
                 }
             }
-            
+
+            // 设置 SSE 响应头
             Headers responseHeaders = exchange.getResponseHeaders();
             responseHeaders.add("Content-Type", "text/event-stream; charset=utf-8");
             responseHeaders.add("Cache-Control", "no-cache");
@@ -228,11 +228,30 @@ public class CompletionHandler implements HttpHandler {
             exchange.sendResponseHeaders(200, 0);
 
             try (OutputStream os = exchange.getResponseBody()) {
+                // 启动定时任务，每隔30秒发送 keep-alive 消息
+                ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+                AtomicBoolean finished = new AtomicBoolean(false);
+                ScheduledFuture<?> keepAliveFuture = scheduler.scheduleAtFixedRate(() -> {
+                    if (!finished.get()) {
+                        try {
+                            // 发送空 keep-alive 消息，符合 OpenAI 的 SSE 标准（可选 data 字段）
+                            String keepAliveLine = "data: \n\n";
+                            os.write(keepAliveLine.getBytes(StandardCharsets.UTF_8));
+                            os.flush();
+                        } catch (IOException e) {
+                            // 输出异常后取消定时任务
+                            finished.set(true);
+                        }
+                    }
+                }, 30, 30, TimeUnit.SECONDS);
+
+                // 构造返回的 SSE JSON 数据
                 JSONObject sseJson = new JSONObject();
                 JSONArray choicesArray = new JSONArray();
 
                 JSONObject choiceObj = new JSONObject();
                 choiceObj.put("index", 0);
+                // 模拟 content_filter_results 字段，可根据需要调整
                 JSONObject contentFilterResults = new JSONObject();
                 contentFilterResults.put("error", new JSONObject().put("code", "").put("message", ""));
                 contentFilterResults.put("hate", new JSONObject().put("filtered", false).put("severity", "safe"));
@@ -245,20 +264,33 @@ public class CompletionHandler implements HttpHandler {
                 delta.put("content", assistantContent);
                 choiceObj.put("delta", delta);
 
+                // 保持 logprobs 与 finish_reason 为 null
+                choiceObj.put("logprobs", JSONObject.NULL);
+                choiceObj.put("finish_reason", JSONObject.NULL);
+
                 choicesArray.put(choiceObj);
                 sseJson.put("choices", choicesArray);
-
                 sseJson.put("created", apiResponse.optLong("created", Instant.now().getEpochSecond()));
                 sseJson.put("id", apiResponse.optString("id", ""));
                 sseJson.put("model", apiResponse.optString("model", requestJson.optString("model")));
-                sseJson.put("system_fingerprint",apiResponse.optString("apiResponse","fp_"+UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
+                sseJson.put("service_tier", "default");
+                sseJson.put("system_fingerprint", apiResponse.optString("system_fingerprint",
+                        "fp_" + UUID.randomUUID().toString().replace("-", "").substring(0, 12)));
+
+                // 发送 SSE 数据行
                 String sseLine = "data: " + sseJson.toString() + "\n\n";
                 os.write(sseLine.getBytes(StandardCharsets.UTF_8));
                 os.flush();
 
+                // 发送完成标识
                 String doneLine = "data: [DONE]\n\n";
                 os.write(doneLine.getBytes(StandardCharsets.UTF_8));
                 os.flush();
+
+                // 发送完毕后取消 keep-alive 定时任务
+                finished.set(true);
+                keepAliveFuture.cancel(true);
+                scheduler.shutdown();
             }
 
         } catch (Exception e) {
@@ -266,6 +298,7 @@ public class CompletionHandler implements HttpHandler {
             utils.sendError(exchange, "Error occurred while processing response: " + e.getMessage(), 500);
         }
     }
+
 
 
 
