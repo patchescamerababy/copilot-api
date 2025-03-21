@@ -84,7 +84,8 @@ jobs:
       shell: pwsh
       run: |
         Write-Output "Removing META-INF/native-image/native-image.properties from JAR..."
-        & zip -d target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar META-INF/native-image/native-image.properties
+        # 使用 7z.exe 删除 JAR 内指定文件
+        & "C:\Program Files\7-Zip\7z.exe" d target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar META-INF/native-image/native-image.properties
 
     - name: Build Native Image (Windows)
       if: matrix.os == 'windows-latest'
