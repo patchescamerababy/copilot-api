@@ -91,7 +91,7 @@ jobs:
       shell: cmd
       run: |
         mkdir target\native-image
-        copy target\CopilotSpringNative-0.0.1-SNAPSHOT.jar target\native-image\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
+        copy target\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target\native-image\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
         xcopy config target\native-image\config /E /I
         cd target\native-image
         native-image.cmd ^
@@ -108,7 +108,7 @@ jobs:
           -H:JNIConfigurationFiles=config/jni-config.json ^
           -H:DynamicProxyConfigurationFiles=config/proxy-config.json ^
           -H:SerializationConfigurationFiles=config/serialization-config.json ^
-          -jar CopilotSpringNative-0.0.1-SNAPSHOT.jar ^
+          -jar Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar ^
           -H:Name=Java-Copilot-${{ matrix.label }}
 
     - name: Build Native Image (Linux/MacOS)
@@ -116,7 +116,7 @@ jobs:
       shell: bash
       run: |
         mkdir -p target/native-image
-        cp target/CopilotSpringNative-0.0.1-SNAPSHOT.jar target/native-image/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
+        cp target/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar target/native-image/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
         cp -r config target/native-image/config
         cd target/native-image
         native-image \
@@ -133,7 +133,7 @@ jobs:
           -H:JNIConfigurationFiles=config/jni-config.json \
           -H:DynamicProxyConfigurationFiles=config/proxy-config.json \
           -H:SerializationConfigurationFiles=config/serialization-config.json \
-          -jar CopilotSpringNative-0.0.1-SNAPSHOT.jar \
+          -jar Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar \
           -H:Name=Java-Copilot-${{ matrix.label }} \
           ${{ matrix.static == true && '--static' || '' }}
 
