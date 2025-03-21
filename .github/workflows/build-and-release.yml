@@ -91,7 +91,7 @@ jobs:
       shell: cmd
       run: |
         mkdir target\native-image
-        copy target\CopilotSpringNative-0.0.1-SNAPSHOT.jar target\native-image\CopilotSpringNative-0.0.1-SNAPSHOT.jar
+        copy target\CopilotSpringNative-0.0.1-SNAPSHOT.jar target\native-image\Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
         xcopy config target\native-image\config /E /I
         cd target\native-image
         native-image.cmd ^
@@ -116,7 +116,7 @@ jobs:
       shell: bash
       run: |
         mkdir -p target/native-image
-        cp target/CopilotSpringNative-0.0.1-SNAPSHOT.jar target/native-image/CopilotSpringNative-0.0.1-SNAPSHOT.jar
+        cp target/CopilotSpringNative-0.0.1-SNAPSHOT.jar target/native-image/Copilot2API-1.0-SNAPSHOT-jar-with-dependencies.jar
         cp -r config target/native-image/config
         cd target/native-image
         native-image \
