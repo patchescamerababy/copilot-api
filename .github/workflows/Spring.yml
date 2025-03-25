@@ -60,7 +60,7 @@ jobs:
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 上传的 artifact 名称中包含平台和架构信息
+          # artifact 名称中包含平台和架构信息
           name: Copilot-API-Spring-${{ matrix.os }}-${{ matrix.arch }}
           path: Spring/target
 
@@ -80,38 +80,44 @@ jobs:
         with:
           path: artifacts
 
-      # 筛选出只上传以 CopilotSpringNative 开头的文件，并排除 .class 和 .json 文件，同时根据 artifact 目录重命名文件
-      - name: Filter and Rename Release Assets
+      # 筛选出只保留需要的 6 个文件（完全匹配文件名），其他文件均跳过
+      - name: Filter Release Assets
         run: |
           mkdir -p release-artifacts
-          # 查找所有以 CopilotSpringNative 开头、排除 .json 和 .class 后缀的文件
-          find artifacts -type f -name 'CopilotSpringNative*' ! -name '*.json' ! -name '*.class' | while read file; do
-            # 获取所在 artifact 目录名称，例如 "Copilot-API-Spring-ubuntu-latest-amd64"
-            parent_dir=$(basename "$(dirname "$file")")
-            # 原始文件名
+          for file in $(find artifacts -type f); do
             base=$(basename "$file")
-            # 如果有扩展名，分离名称和扩展名
-            if [[ "$base" == *.* ]]; then
-              name_noext="${base%.*}"
-              ext="${base##*.}"
-            else
-              name_noext="$base"
-              ext=""
-            fi
-            # 拼接新文件名，格式为：<原始名称>-<artifact目录>.[ext]
-            newname="${name_noext}-${parent_dir}"
-            if [ -n "$ext" ]; then
-              newname="${newname}.${ext}"
-            fi
-            cp "$file" "release-artifacts/$newname"
+            case "$base" in
+              CopilotSpringNative-0.0.1-SNAPSHOT.jar)
+                cp "$file" release-artifacts/"$base"
+                ;;
+              CopilotSpringNative-Copilot-API-Spring-macos-latest-amd64)
+                cp "$file" release-artifacts/"$base"
+                ;;
+              CopilotSpringNative-Copilot-API-Spring-macos-latest-arm64)
+                cp "$file" release-artifacts/"$base"
+                ;;
+              CopilotSpringNative-Copilot-API-Spring-ubuntu-latest-amd64)
+                cp "$file" release-artifacts/"$base"
+                ;;
+              CopilotSpringNative-Copilot-API-Spring-ubuntu-latest-arm64)
+                cp "$file" release-artifacts/"$base"
+                ;;
+              CopilotSpringNative-Copilot-API-Spring-windows-latest-amd64.exe)
+                cp "$file" release-artifacts/"$base"
+                ;;
+              *)
+                echo "Skipping $base"
+                ;;
+            esac
           done
-          echo "Filtered and renamed files:"
+          echo "Filtered files:"
           ls -l release-artifacts
 
       - name: Create version
         id: version
         run: |
-          VERSION=$(date +v-%y-%m-%d)
+          # 生成 tag 格式为 YYYY-MM-DD，例如：2025-03-06
+          VERSION=$(date +%Y-%m-%d)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
@@ -126,7 +132,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 可选：将 artifacts 同步到 artifacts 分支（根据需要）
+      # 可选：将 artifacts 同步到 artifacts 分支
       - name: Check for artifacts branch
         id: check_branch
         run: |
@@ -148,12 +154,14 @@ jobs:
           git add .
           git commit -m "Initialize artifacts branch"
           git push -u origin artifacts
+
       - name: Checkout artifacts branch
         uses: actions/checkout@v4
         with:
           ref: artifacts
           fetch-depth: 0
           path: artifacts-branch
+
       - name: Update artifacts branch
         run: |
           mkdir -p artifacts-branch/spring
