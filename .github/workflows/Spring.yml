@@ -81,12 +81,10 @@ jobs:
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: Spring
 
       - name: Zip Artifacts
         run: |
-          ls -alSh
-          cd Spring
           ls -alSh
           zip -r artifacts.zip target
           
