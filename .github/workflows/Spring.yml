@@ -68,15 +68,17 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-      
+        with:
+          persist-credentials: true  # 确保使用 GITHUB_TOKEN 凭据
+  
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-
+  
       - name: Zip Artifacts
         run: zip -r artifacts.zip artifacts
-
+  
       - name: Configure Git
         run: |
           git config user.name "GitHub Action"
@@ -100,7 +102,7 @@ jobs:
           release_name: "Release ${{ env.TAG }}"
           draft: false
           prerelease: false
-
+  
       - name: Upload Release Asset
         uses: actions/upload-release-asset@v1
         env:
@@ -110,3 +112,4 @@ jobs:
           asset_path: artifacts.zip
           asset_name: artifacts.zip
           asset_content_type: application/zip
+  
