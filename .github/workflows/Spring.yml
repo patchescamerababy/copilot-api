@@ -67,7 +67,6 @@ jobs:
         with:
           name: Cppilot-API-SpringBoot-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            ls -alSh
             ./target/Cppilot-API-SpringBoot*
 
   release:
