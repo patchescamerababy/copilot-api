@@ -135,6 +135,8 @@ jobs:
             echo "branch_exists=true" >> $GITHUB_OUTPUT
           else
             echo "branch_exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create artifacts branch if needed
         if: steps.check_branch.outputs.branch_exists == 'false'
         run: |
