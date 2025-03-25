@@ -86,6 +86,8 @@ jobs:
       - name: Zip Artifacts
         run: |
           ls -alSh
+          cd Spring
+          ls -alSh
           zip -r artifacts.zip target
           
 
