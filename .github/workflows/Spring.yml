@@ -85,14 +85,18 @@ jobs:
         run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
+          
       - name: Create Git Tag (v-YYYY-MM-DD)
         id: tag
+        env:
+          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
         run: |
           TAG=$(date +v-%Y-%m-%d)
           echo "TAG=$TAG" >> $GITHUB_ENV
           git tag $TAG
-          git push origin $TAG
+          git push https://x-access-token:${PAT_TOKEN}@github.com/patchescamerababy/copilot-api.git $TAG
           echo "::set-output name=tag::$TAG"
+
           
       - name: Create GitHub Release
         id: create_release
