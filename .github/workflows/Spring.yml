@@ -84,7 +84,7 @@ jobs:
           path: artifacts
 
       - name: Zip Artifacts
-        run: zip -r artifacts.zip artifacts
+        run: zip -r artifacts.zip Spring/target
 
       - name: Configure Git
         run: |
