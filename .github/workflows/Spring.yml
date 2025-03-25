@@ -1,0 +1,121 @@
+name: AOT Compile and Release
+
+# Grant the necessary permissions for pushing tags
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'SpringBoot/**'
+      - '.github/workflows/Spring.yml'
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            arch: amd64
+            mvnw_cmd: ".\\mvnw.cmd"
+          - os: ubuntu-latest
+            arch: amd64
+            mvnw_cmd: "./mvnw"
+          - os: ubuntu-latest
+            arch: arm64
+            mvnw_cmd: "./mvnw"
+          - os: macos-latest
+            arch: amd64
+            mvnw_cmd: "./mvnw"
+          - os: macos-latest
+            arch: arm64
+            mvnw_cmd: "./mvnw"
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+
+      - name: Setup GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '21'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          native-image-job-reports: 'true'
+          architecture: ${{ matrix.arch }}
+
+      - name: Make mvnw Executable (Non-Windows)
+        if: runner.os != 'Windows'
+        run: chmod +x SpringBoot/mvnw
+
+      - name: Run AOT Compilation
+        working-directory: SpringBoot
+        run: ${{ matrix.mvnw_cmd }} native:compile -Pnative -DskipTests
+
+      - name: Package Application
+        working-directory: SpringBoot
+        run: ${{ matrix.mvnw_cmd }} package -DskipTests
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChatOnSpring-${{ matrix.os }}-${{ matrix.arch }}
+          path: SpringBoot/target
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+      
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Zip Artifacts
+        run: zip -r artifacts.zip artifacts
+
+      - name: Configure Git
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+
+      - name: Create Git Tag (v-YYYY-MM-DD)
+        id: tag
+        run: |
+          TAG=$(date +v-%Y-%m-%d)
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          git tag $TAG
+          git push origin $TAG
+          echo "::set-output name=tag::$TAG"
+          
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.TAG }}
+          release_name: "Release ${{ env.TAG }}"
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: artifacts.zip
+          asset_name: artifacts.zip
+          asset_content_type: application/zip
