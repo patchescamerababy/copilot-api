@@ -30,7 +30,6 @@ jobs:
           - os: macos-latest
             arch: arm64
             mvnw_cmd: "./mvnw"
-
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -71,7 +70,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
         with:
-          persist-credentials: true  # 确保使用 GITHUB_TOKEN 凭据
+          persist-credentials: true
   
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
@@ -80,42 +79,19 @@ jobs:
   
       - name: Zip Artifacts
         run: zip -r artifacts.zip artifacts
-  
-      - name: Configure Git
-        run: |
-          git config user.name "GitHub Action"
-          git config user.email "action@github.com"
-          
-      - name: Create Git Tag (v-YYYY-MM-DD)
-        id: tag
-        env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
-        run: |
-          TAG=$(date +v-%Y-%m-%d)
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          git tag $TAG
-          git push https://x-access-token:${PAT_TOKEN}@github.com/patchescamerababy/copilot-api.git $TAG
-          echo "::set-output name=tag::$TAG"
 
-          
+      # 生成符合格式 v-YY-MM-DD 的 tag，并写入环境变量 RELEASE_TAG
+      - name: Set Release Tag
+        id: set_tag
+        run: |
+          RELEASE_TAG=$(date +v-%y-%m-%d)
+          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
+          echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+
+      # 使用 ncipollo/release-action 创建 Release，会自动创建 tag（如果不存在）
       - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: ${{ env.TAG }}
-          release_name: "Release ${{ env.TAG }}"
-          draft: false
-          prerelease: false
-  
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: artifacts.zip
-          asset_name: artifacts.zip
-          asset_content_type: application/zip
-  
+          tag: ${{ env.RELEASE_TAG }}
+          name: "Release ${{ env.RELEASE_TAG }}"
+          files: artifacts.zip
