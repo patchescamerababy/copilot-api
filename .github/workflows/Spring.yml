@@ -60,6 +60,7 @@ jobs:
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
+          # 上传的 artifact 名称中包含平台和架构信息
           name: Copilot-API-Spring-${{ matrix.os }}-${{ matrix.arch }}
           path: Spring/target
 
@@ -79,13 +80,32 @@ jobs:
         with:
           path: artifacts
 
-      # 筛选出只上传以 CopilotSpringNative 开头的文件，并排除 .class 和 .json 文件
-      - name: Filter Release Assets
+      # 筛选出只上传以 CopilotSpringNative 开头的文件，并排除 .class 和 .json 文件，同时根据 artifact 目录重命名文件
+      - name: Filter and Rename Release Assets
         run: |
           mkdir -p release-artifacts
-          # 查找所有以 CopilotSpringNative 开头，且不包含 .json 和 .class 后缀的文件，复制到 release-artifacts 文件夹
-          find artifacts -type f -name 'CopilotSpringNative*' ! -name '*.json' ! -name '*.class' -exec cp {} release-artifacts/ \;
-          echo "Filtered files:"
+          # 查找所有以 CopilotSpringNative 开头、排除 .json 和 .class 后缀的文件
+          find artifacts -type f -name 'CopilotSpringNative*' ! -name '*.json' ! -name '*.class' | while read file; do
+            # 获取所在 artifact 目录名称，例如 "Copilot-API-Spring-ubuntu-latest-amd64"
+            parent_dir=$(basename "$(dirname "$file")")
+            # 原始文件名
+            base=$(basename "$file")
+            # 如果有扩展名，分离名称和扩展名
+            if [[ "$base" == *.* ]]; then
+              name_noext="${base%.*}"
+              ext="${base##*.}"
+            else
+              name_noext="$base"
+              ext=""
+            fi
+            # 拼接新文件名，格式为：<原始名称>-<artifact目录>.[ext]
+            newname="${name_noext}-${parent_dir}"
+            if [ -n "$ext" ]; then
+              newname="${newname}.${ext}"
+            fi
+            cp "$file" "release-artifacts/$newname"
+          done
+          echo "Filtered and renamed files:"
           ls -l release-artifacts
 
       - name: Create version
