@@ -80,7 +80,6 @@ jobs:
         with:
           path: artifacts
 
-      # 筛选出只上传以 CopilotSpringNative 开头的文件，并排除 .class 和 .json 文件，同时根据 artifact 目录重命名文件
       - name: Filter and Rename Release Assets
         run: |
           mkdir -p release-artifacts
@@ -90,7 +89,7 @@ jobs:
             parent_dir=$(basename "$(dirname "$file")")
             # 原始文件名
             base=$(basename "$file")
-            # 如果有扩展名，分离名称和扩展名
+            # 分离文件名和扩展名（若有）
             if [[ "$base" == *.* ]]; then
               name_noext="${base%.*}"
               ext="${base##*.}"
@@ -108,6 +107,16 @@ jobs:
           echo "Filtered and renamed files:"
           ls -l release-artifacts
 
+      - name: Compress Release Artifacts
+        run: |
+          mkdir -p release-artifacts-compressed
+          for file in release-artifacts/*; do
+            filename=$(basename "$file")
+            zip "release-artifacts-compressed/${filename}.zip" "$file"
+          done
+          echo "Compressed files:"
+          ls -l release-artifacts-compressed
+
       - name: Create version
         id: version
         run: |
@@ -119,14 +128,13 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: Release ${{ steps.version.outputs.version }}
-          files: release-artifacts/*
+          files: release-artifacts-compressed/*.zip
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 可选：将 artifacts 同步到 artifacts 分支（根据需要）
       - name: Check for artifacts branch
         id: check_branch
         run: |
@@ -148,16 +156,18 @@ jobs:
           git add .
           git commit -m "Initialize artifacts branch"
           git push -u origin artifacts
+
       - name: Checkout artifacts branch
         uses: actions/checkout@v4
         with:
           ref: artifacts
           fetch-depth: 0
           path: artifacts-branch
+
       - name: Update artifacts branch
         run: |
           mkdir -p artifacts-branch/spring
-          cp -r release-artifacts/* artifacts-branch/spring/ || echo "No Spring artifacts to copy"
+          cp -r release-artifacts-compressed/*.zip artifacts-branch/spring/ || echo "No Spring artifacts to copy"
           cd artifacts-branch
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
