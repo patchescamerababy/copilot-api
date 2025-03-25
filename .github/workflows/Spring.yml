@@ -65,33 +65,73 @@ jobs:
 
   release:
     needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-        with:
-          persist-credentials: true
-  
-      - name: Download Build Artifacts
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
-  
-      - name: Zip Artifacts
-        run: zip -r artifacts.zip artifacts
 
-      # 生成符合格式 v-YY-MM-DD 的 tag，并写入环境变量 RELEASE_TAG
-      - name: Set Release Tag
-        id: set_tag
+      - name: Create version
+        id: version
         run: |
-          RELEASE_TAG=$(date +v-%y-%m-%d)
-          echo "RELEASE_TAG=$RELEASE_TAG" >> $GITHUB_ENV
-          echo "tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
+          VERSION=$(date +v-%y-%m-%d)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      # 使用 ncipollo/release-action 创建 Release，会自动创建 tag（如果不存在）
       - name: Create GitHub Release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v1
         with:
-          tag: ${{ env.RELEASE_TAG }}
-          name: "Release ${{ env.RELEASE_TAG }}"
-          files: artifacts.zip
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          files: artifacts/**/*  # 上传所有构建产物
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for artifacts branch
+        id: check_branch
+        run: |
+          git fetch origin
+          if git ls-remote --heads origin artifacts | grep artifacts > /dev/null; then
+            echo "branch_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "branch_exists=false" >> $GITHUB_OUTPUT
+
+      - name: Create artifacts branch if needed
+        if: steps.check_branch.outputs.branch_exists == 'false'
+        run: |
+          git checkout -b artifacts
+          mkdir -p spring
+          touch spring/.gitkeep
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "Initialize artifacts branch"
+          git push -u origin artifacts
+
+      - name: Checkout artifacts branch
+        uses: actions/checkout@v4
+        with:
+          ref: artifacts
+          fetch-depth: 0
+          path: artifacts-branch
+
+      - name: Update artifacts branch
+        run: |
+          mkdir -p artifacts-branch/spring
+          cp -r artifacts/spring-* artifacts-branch/spring/ || echo "No Spring artifacts to copy"
+          cd artifacts-branch
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add .
+          git commit -m "Update artifacts for ${{ steps.version.outputs.version }}" || echo "No changes to commit"
+          git push origin artifacts
