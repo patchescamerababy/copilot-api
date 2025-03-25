@@ -1,9 +1,5 @@
 name: AOT Compile and Release
 
-# Grant the necessary permissions for pushing tags
-permissions:
-  contents: write
-
 on:
   push:
     branches:
@@ -38,8 +34,6 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-        with:
-          persist-credentials: true
 
       - name: Setup GraalVM
         uses: graalvm/setup-graalvm@v1
@@ -65,9 +59,8 @@ jobs:
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Cppilot-API-SpringBoot-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            Spring/target/Cppilot-API-SpringBoot*
+          name: Copilot-API-Spring-${{ matrix.os }}-${{ matrix.arch }}
+          path: Spring/target
 
   release:
     needs: build
@@ -75,28 +68,19 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
-        with:
-          persist-credentials: true
       
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
         with:
-          # 将产物下载到 Spring 目录下
-          path: Spring
+          path: artifacts
 
       - name: Zip Artifacts
-        run: |
-          cd Spring
-          ls -alSh
-          # 压缩 Spring 目录下所有以 Cppilot-API-SpringBoot 开头的文件/文件夹
-          zip -r artifacts.zip Cppilot-API-SpringBoot*
-
+        run: zip -r artifacts.zip artifacts
 
       - name: Configure Git
         run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
-
       - name: Create Git Tag (v-YYYY-MM-DD)
         id: tag
         run: |
