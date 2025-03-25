@@ -87,8 +87,10 @@ jobs:
       - name: Zip Artifacts
         run: |
           cd Spring
-          ls -alSh target
-          zip -r artifacts.zip target/Cppilot-API-SpringBoot*
+          ls -alSh
+          # 压缩 Spring 目录下所有以 Cppilot-API-SpringBoot 开头的文件/文件夹
+          zip -r artifacts.zip Cppilot-API-SpringBoot*
+
 
       - name: Configure Git
         run: |
