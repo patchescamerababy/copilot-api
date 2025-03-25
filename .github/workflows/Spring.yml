@@ -67,7 +67,7 @@ jobs:
         with:
           name: Cppilot-API-SpringBoot-${{ matrix.os }}-${{ matrix.arch }}
           path: |
-            ./target/Cppilot-API-SpringBoot*
+            Spring/target/Cppilot-API-SpringBoot*
 
   release:
     needs: build
@@ -81,13 +81,14 @@ jobs:
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
         with:
+          # 将产物下载到 Spring 目录下
           path: Spring
 
       - name: Zip Artifacts
         run: |
-          ls -alSh
-          zip -r artifacts.zip target
-          
+          cd Spring
+          ls -alSh target
+          zip -r artifacts.zip target/Cppilot-API-SpringBoot*
 
       - name: Configure Git
         run: |
