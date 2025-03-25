@@ -79,6 +79,15 @@ jobs:
         with:
           path: artifacts
 
+      # 筛选出只上传以 CopilotSpringNative 开头的文件，并排除 .class 和 .json 文件
+      - name: Filter Release Assets
+        run: |
+          mkdir -p release-artifacts
+          # 查找所有以 CopilotSpringNative 开头，且不包含 .json 和 .class 后缀的文件，复制到 release-artifacts 文件夹
+          find artifacts -type f -name 'CopilotSpringNative*' ! -name '*.json' ! -name '*.class' -exec cp {} release-artifacts/ \;
+          echo "Filtered files:"
+          ls -l release-artifacts
+
       - name: Create version
         id: version
         run: |
@@ -90,13 +99,14 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: Release ${{ steps.version.outputs.version }}
-          files: artifacts/**/*  # 上传所有构建产物
+          files: release-artifacts/*
           draft: false
           prerelease: false
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 可选：将 artifacts 同步到 artifacts 分支（根据需要）
       - name: Check for artifacts branch
         id: check_branch
         run: |
@@ -105,7 +115,6 @@ jobs:
             echo "branch_exists=true" >> $GITHUB_OUTPUT
           else
             echo "branch_exists=false" >> $GITHUB_OUTPUT
-
       - name: Create artifacts branch if needed
         if: steps.check_branch.outputs.branch_exists == 'false'
         run: |
@@ -117,18 +126,16 @@ jobs:
           git add .
           git commit -m "Initialize artifacts branch"
           git push -u origin artifacts
-
       - name: Checkout artifacts branch
         uses: actions/checkout@v4
         with:
           ref: artifacts
           fetch-depth: 0
           path: artifacts-branch
-
       - name: Update artifacts branch
         run: |
           mkdir -p artifacts-branch/spring
-          cp -r artifacts/spring-* artifacts-branch/spring/ || echo "No Spring artifacts to copy"
+          cp -r release-artifacts/* artifacts-branch/spring/ || echo "No Spring artifacts to copy"
           cd artifacts-branch
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
