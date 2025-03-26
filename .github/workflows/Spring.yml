@@ -60,7 +60,6 @@ jobs:
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          # 上传的 artifact 名称中包含平台和架构信息
           name: Copilot-API-Spring-${{ matrix.os }}-${{ matrix.arch }}
           path: Spring/target
 
@@ -82,14 +81,21 @@ jobs:
 
       - name: Filter and Rename Release Assets
         run: |
-          mkdir -p release-artifacts
-          # 查找所有以 CopilotSpringNative 开头、排除 .json 和 .class 后缀的文件
-          find artifacts -type f -name 'CopilotSpringNative*' ! -name '*.json' ! -name '*.class' | while read file; do
-            # 获取所在 artifact 目录名称，例如 "Copilot-API-Spring-ubuntu-latest-amd64"
+          mkdir -p release-artifacts/jar
+          mkdir -p release-artifacts/executables
+
+          # 查找并复制一个jar文件（排除 .original 文件）
+          jar_file=$(find artifacts -type f -name '*.jar' ! -name '*.original' | head -n 1)
+          if [ -n "$jar_file" ]; then
+            cp "$jar_file" "release-artifacts/jar/$(basename "$jar_file")"
+          else
+            echo "未找到jar文件"
+          fi
+
+          # 查找原生可执行文件，排除 .json、.class 和 .original 文件
+          find artifacts -type f -name 'CopilotSpringNative*' ! -name '*.json' ! -name '*.class' ! -name '*.original' | while read file; do
             parent_dir=$(basename "$(dirname "$file")")
-            # 原始文件名
             base=$(basename "$file")
-            # 分离文件名和扩展名（若有）
             if [[ "$base" == *.* ]]; then
               name_noext="${base%.*}"
               ext="${base##*.}"
@@ -97,30 +103,32 @@ jobs:
               name_noext="$base"
               ext=""
             fi
-            # 拼接新文件名，格式为：<原始名称>-<artifact目录>.[ext]
             newname="${name_noext}-${parent_dir}"
             if [ -n "$ext" ]; then
               newname="${newname}.${ext}"
             fi
-            cp "$file" "release-artifacts/$newname"
+            cp "$file" "release-artifacts/executables/$newname"
           done
-          echo "Filtered and renamed files:"
-          ls -l release-artifacts
 
-      - name: Compress Release Artifacts
+          echo "Jar文件："
+          ls -l release-artifacts/jar
+          echo "原生可执行文件："
+          ls -l release-artifacts/executables
+
+      - name: Compress Native Executables
         run: |
           mkdir -p release-artifacts-compressed
-          for file in release-artifacts/*; do
+          for file in release-artifacts/executables/*; do
             filename=$(basename "$file")
             zip "release-artifacts-compressed/${filename}.zip" "$file"
           done
-          echo "Compressed files:"
+          echo "压缩后的文件："
           ls -l release-artifacts-compressed
 
       - name: Create version
         id: version
         run: |
-          VERSION=$(date +v-%y-%m-%d)
+          VERSION=$(date +v-%Y-%m-%d)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
@@ -128,7 +136,9 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: Release ${{ steps.version.outputs.version }}
-          files: release-artifacts-compressed/*.zip
+          files: |
+            release-artifacts/jar/*.jar
+            release-artifacts-compressed/*.zip
           draft: false
           prerelease: false
           generate_release_notes: true
@@ -167,7 +177,7 @@ jobs:
       - name: Update artifacts branch
         run: |
           mkdir -p artifacts-branch/spring
-          cp -r release-artifacts-compressed/*.zip artifacts-branch/spring/ || echo "No Spring artifacts to copy"
+          cp -r release-artifacts/jar/*.jar release-artifacts-compressed/*.zip artifacts-branch/spring/ || echo "No Spring artifacts to copy"
           cd artifacts-branch
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
