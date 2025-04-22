@@ -1,0 +1,108 @@
+name: Linux Build, Dockerize and Release
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - '.github/workflows/Alpine.yml'
+  pull_request:
+    paths:
+      - 'src/**'
+      - '.github/workflows/Alpine.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: alpine:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set DATE env
+        run: echo "DATE=$(date +%Y.%m.%d)" >> $GITHUB_ENV
+
+      - name: Install Build Dependencies
+        run: |
+          apk update
+          apk add --no-cache \
+            g++ make git curl-dev openssl-dev sqlite-dev zlib-dev musl-dev
+
+      - name: Prepare Third‑party Headers
+        run: |
+          mkdir -p /usr/local/include/nlohmann
+          git clone https://github.com/yhirose/cpp-httplib.git /tmp/httplib
+          cp /tmp/httplib/httplib.h /usr/local/include/
+          git clone https://github.com/nlohmann/json.git /tmp/json
+          cp /tmp/json/single_include/nlohmann/json.hpp /usr/local/include/nlohmann/
+
+      - name: Build C++ Project
+        run: |
+          mkdir -p build/obj build/bin
+          echo "GCC Version: $(g++ --version)"
+          for file in src/main/cpp/*.cpp; do
+            obj="build/obj/$(basename "${file%.cpp}").o"
+            g++ -std=c++23 -Wall -Wextra -I/usr/local/include \
+                -c "$file" -o "$obj"
+          done
+          g++ build/obj/*.o -o build/bin/Copilot \
+              -static-libstdc++ -static-libgcc \
+              -Wl,-rpath,/usr/lib \
+              -lcurl -lssl -lcrypto -lsqlite3 -lz -pthread
+
+      - name: List Build Artifacts
+        run: ls -la build/bin
+
+      # —— Inline Dockerfile, Build & Push 镜像 —— #
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write Dockerfile inline
+        run: |
+          cat << 'EOF' > Dockerfile
+          # === Stage 1: Builder ===
+          FROM alpine:latest AS builder
+          RUN apk update && apk add --no-cache \
+                g++ make git curl-dev openssl-dev sqlite-dev zlib-dev musl-dev
+          RUN mkdir -p /usr/local/include/nlohmann \
+           && git clone https://github.com/yhirose/cpp-httplib.git /tmp/httplib \
+           && cp /tmp/httplib/httplib.h /usr/local/include/ \
+           && git clone https://github.com/nlohmann/json.git /tmp/json \
+           && cp /tmp/json/single_include/nlohmann/json.hpp /usr/local/include/nlohmann/
+          WORKDIR /workspace
+          COPY src/main/cpp ./src/main/cpp
+          RUN mkdir -p build/obj build/bin \
+           && for file in src/main/cpp/*.cpp; do \
+                obj="build/obj/\$(basename \\"\${file%.cpp}\\").o"; \
+                g++ -std=c++23 -Wall -Wextra -I/usr/local/include \
+                    -c "\$file" -o "\$obj"; \
+              done \
+           && g++ build/obj/*.o -o build/bin/Copilot \
+              -static-libstdc++ -static-libgcc \
+              -Wl,-rpath,/usr/lib \
+              -lcurl -lssl -lcrypto -lsqlite3 -lz -pthread
+
+          # === Stage 2: Runtime ===
+          FROM alpine:latest
+          RUN apk update && apk add --no-cache curl sqlite-libs openssl zlib
+          COPY --from=builder /workspace/build/bin/Copilot /usr/local/bin/Copilot
+          ENTRYPOINT ["Copilot"]
+          CMD ["--help"]
+          EOF
+
+      - name: Build and Push Docker Image
+        run: |
+          docker build \
+            --build-arg DATE=${{ env.DATE }} \
+            -t ghcr.io/${{ github.repository_owner }}/copilot2api:cpp \
+            .
+          docker push ghcr.io/${{ github.repository_owner }}/copilot2api:cpp
+
+      # —— 可选：上传可执行文件 Artifact —— #
+      - name: Upload Copilot Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: Copilot-linux
+          path: build/bin/Copilot
