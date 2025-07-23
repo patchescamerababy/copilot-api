@@ -12,7 +12,9 @@ CXX      := g++
 CXXFLAGS := -std=c++20 -O3 -Wall -Wextra \
             -I/usr/local/include
 LDFLAGS  := -L/usr/local/lib
-LIBS     := -static -lz -lcurl -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lresolv
+LIBS := -static -Wl,--start-group \
+        -lcurl -lssl -lcrypto -lnghttp2 -lsqlite3 -lzstd -lz -lresolv \
+        -Wl,--end-group -ldl -lpthread
 
 TARGET   := $(BIN_DIR)/copilot-api
 
