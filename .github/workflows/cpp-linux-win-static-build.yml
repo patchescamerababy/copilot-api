@@ -13,7 +13,7 @@ on:
       - '.github/workflows/cpp-linux-win-static-build.yml'
 
 jobs:
-  # 1. Linux x86_64 静态构建 (musl free、glibc 全静态)
+  # 1. Linux x86_64 静态构建
   build-linux:
     runs-on: ubuntu-latest
     steps:
@@ -24,7 +24,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             g++ make perl wget tar xz-utils \
-            pkg-config autoconf automake libtool
+            pkg-config autoconf automake libtool git
 
       - name: Build static dependencies
         run: |
@@ -34,14 +34,17 @@ jobs:
           # zstd
           wget -q https://github.com/facebook/zstd/releases/download/v1.5.5/zstd-1.5.5.tar.gz
           tar -zxf zstd-1.5.5.tar.gz
-          cd zstd-1.5.5; make -j$(nproc); sudo make install; cd ..
+          cd zstd-1.5.5
+          make -j"$(nproc)"
+          sudo make install
+          cd ..
 
           # zlib
           wget -q https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -zxf zlib-1.3.1.tar.gz
           cd zlib-1.3.1
           ./configure --static --prefix=/usr/local
-          make -j$(nproc); sudo make install
+          make -j"$(nproc)"; sudo make install
           cd ..
 
           # OpenSSL
@@ -49,7 +52,7 @@ jobs:
           tar -zxf openssl-1.1.1w.tar.gz
           cd openssl-1.1.1w
           ./Configure linux-x86_64 no-shared --prefix=/usr/local
-          make -j$(nproc); sudo make install_sw
+          make -j"$(nproc)"; sudo make install_sw
           cd ..
 
           # SQLite3
@@ -57,7 +60,7 @@ jobs:
           tar -zxf sqlite-autoconf-3450200.tar.gz
           cd sqlite-autoconf-3450200
           ./configure --disable-shared --enable-static --prefix=/usr/local
-          make -j$(nproc); sudo make install
+          make -j"$(nproc)"; sudo make install
           cd ..
 
           # nghttp2
@@ -66,7 +69,7 @@ jobs:
           cd nghttp2-1.59.0
           autoreconf -i
           ./configure --disable-shared --enable-static --prefix=/usr/local
-          make -j$(nproc); sudo make install
+          make -j"$(nproc)"; sudo make install
           cd ..
 
           # curl
@@ -76,10 +79,10 @@ jobs:
           ./configure --disable-shared --enable-static \
                       --with-ssl --with-zlib --with-nghttp2 \
                       --with-zstd --prefix=/usr/local LDFLAGS="-static"
-          make -j$(nproc); sudo make install
+          make -j"$(nproc)"; sudo make install
           cd ../..
 
-      - name: Header‑only libraries
+      - name: Header-only libraries
         run: |
           sudo mkdir -p /usr/local/include/nlohmann
           git clone --depth=1 https://github.com/yhirose/cpp-httplib.git
@@ -87,17 +90,19 @@ jobs:
           git clone --depth=1 https://github.com/nlohmann/json.git
           sudo cp json/single_include/nlohmann/json.hpp /usr/local/include/nlohmann/
 
-      - name: Build copilot (Linux static)
+      - name: Build (Linux static)
         run: |
           make clean
-          make -j$(nproc) all_static
+          make -j"$(nproc)" all_static
+          ls -l build/bin
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact (Linux)
+        uses: actions/upload-artifact@v4
         with:
           name: copilot-linux-static
           path: build/bin/copilot-linux-static
 
-  # 2. Windows x86_64 交叉编译、完全静态
+  # 2. Windows x86_64 交叉编译
   build-windows:
     runs-on: ubuntu-latest
     env:
@@ -112,12 +117,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install MinGW‑w64 toolchain
+      - name: Install MinGW-w64 toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             mingw-w64 g++ make pkg-config autoconf automake libtool \
-            perl wget tar xz-utils mingw-w64-tools binutils-mingw-w64-x86-64
+            perl wget tar xz-utils mingw-w64-tools binutils-mingw-w64-x86-64 git
 
       - name: Build static dependencies (Windows)
         run: |
@@ -128,7 +133,7 @@ jobs:
           wget -q https://github.com/facebook/zstd/releases/download/v1.5.5/zstd-1.5.5.tar.gz
           tar -zxf zstd-1.5.5.tar.gz
           cd zstd-1.5.5
-          make -j$(nproc) CC=$CC CXX=$CXX
+          make -j"$(nproc)" CC=$CC CXX=$CXX
           sudo make PREFIX=$PREFIX install
           cd ..
 
@@ -137,7 +142,7 @@ jobs:
           tar -zxf zlib-1.3.1.tar.gz
           cd zlib-1.3.1
           CC=$CC ./configure --static --prefix=$PREFIX
-          make -j$(nproc); sudo make install
+          make -j"$(nproc)"; sudo make install
           cd ..
 
           # OpenSSL
@@ -145,7 +150,7 @@ jobs:
           tar -zxf openssl-1.1.1w.tar.gz
           cd openssl-1.1.1w
           CC=$CC ./Configure mingw64 no-shared --prefix=$PREFIX
-          make -j$(nproc); sudo make install_sw
+          make -j"$(nproc)"; sudo make install_sw
           cd ..
 
           # SQLite3
@@ -155,7 +160,7 @@ jobs:
           CC=$CC CXX=$CXX ./configure \
             --host=x86_64-w64-mingw32 --disable-shared --enable-static \
             --prefix=$PREFIX
-          make -j$(nproc); sudo make install
+          make -j"$(nproc)"; sudo make install
           cd ..
 
           # nghttp2
@@ -166,10 +171,10 @@ jobs:
           CC=$CC CXX=$CXX ./configure \
             --host=x86_64-w64-mingw32 --disable-shared --enable-static \
             --prefix=$PREFIX
-          make -j$(nproc); sudo make install
+          make -j"$(nproc)"; sudo make install
           cd ..
 
-          # curl  ── 关键：OPENSSL_STATIC + pkg-config --static
+          # curl
           wget -q https://curl.se/download/curl-8.7.1.tar.xz
           tar -xf curl-8.7.1.tar.xz
           cd curl-8.7.1
@@ -185,10 +190,10 @@ jobs:
                       --with-zstd=$PREFIX \
                       --disable-ldap --disable-ldaps \
                       --prefix=$PREFIX
-          make -j$(nproc); sudo make install
-          cd ..
+          make -j"$(nproc)"; sudo make install
+          cd ../..
 
-      - name: Header‑only libs
+      - name: Header-only libs
         run: |
           sudo mkdir -p $PREFIX/include/nlohmann
           git clone --depth=1 https://github.com/yhirose/cpp-httplib.git
@@ -196,36 +201,54 @@ jobs:
           git clone --depth=1 https://github.com/nlohmann/json.git
           sudo cp json/single_include/nlohmann/json.hpp $PREFIX/include/nlohmann/
 
-      - name: Build Ccopilot (Windows static)
+      - name: Build (Windows static)
         run: |
           make clean
-          make -j$(nproc) all_static_win
+          make -j"$(nproc)" all_static_win
+          ls -l build/bin
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact (Windows)
+        uses: actions/upload-artifact@v4
         with:
           name: copilot-windows-static
           path: build/bin/copilot-windows-static.exe
 
-  # 3. GitHub Release (打包两平台产物)
+  # 3. Release
   release:
     needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
-    permissions: { contents: write }
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
-        with: { name: copilot-linux-static,  path: dist/ }
+        with:
+          name: copilot-linux-static
+          path: dist/
       - uses: actions/download-artifact@v4
-        with: { name: copilot-windows-static, path: dist/ }
+        with:
+          name: copilot-windows-static
+          path: dist/
       - run: ls -Rl dist
-      - id: date
+
+      - name: Generate checksums (optional)
+        run: |
+          cd dist
+          sha256sum copilot-linux-static > copilot-linux-static.sha256
+          sha256sum copilot-windows-static.exe > copilot-windows-static.exe.sha256
+          cd -
+
+      - name: Set date env
         run: echo "DATE=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
       - uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ env.DATE }}
           name: Release v${{ env.DATE }}
           files: |
-            dist/copilot-windows-static
+            dist/copilot-linux-static
+            dist/copilot-linux-static.sha256
             dist/copilot-windows-static.exe
+            dist/copilot-windows-static.exe.sha256
           draft: false
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
