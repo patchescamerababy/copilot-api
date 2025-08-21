@@ -1,5 +1,5 @@
-import com.sun.jna.platform.win32.Advapi32Util;
-import com.sun.jna.platform.win32.WinReg;
+//import com.sun.jna.platform.win32.Advapi32Util;
+//import com.sun.jna.platform.win32.WinReg;
 import com.sun.net.httpserver.HttpExchange;
 import okhttp3.*;
 import org.json.JSONObject;
@@ -10,17 +10,22 @@ import java.net.InetSocketAddress;
 import java.net.Proxy;
 import java.net.SocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.InflaterInputStream;
 
 public class utils {
     private static final ReentrantLock tokenLock = new ReentrantLock();
@@ -30,22 +35,28 @@ public class utils {
     public static OkHttpClient client = createOkHttpClient();
 
     public static OkHttpClient getOkHttpClient() {
-        return client;
+        return createOkHttpClient();
     }
-    
     private static OkHttpClient createOkHttpClient() {
         OkHttpClient okHttpClient = null;
         try {
+            // 获取默认的受信任的证书存储
+            TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+            trustManagerFactory.init((KeyStore) null);
+
+            // 提取默认 TrustManager
+            X509TrustManager defaultTrustManager = (X509TrustManager) trustManagerFactory.getTrustManagers()[0];
+
             // 创建一个不验证证书的 TrustManager
             final X509TrustManager trustAllCertificates = new X509TrustManager() {
                 @Override
                 public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-                    // 不做任何检查，信任所有客户端证书
+
                 }
 
                 @Override
                 public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
-                    // 不做任何检查，信任所有服务器证书
+
                 }
 
                 @Override
@@ -61,11 +72,9 @@ public class utils {
 
             Proxy proxy = getSystemProxy();
 
-
             // 创建 OkHttpClient
             okHttpClient = new OkHttpClient.Builder()
                     .proxy(proxy)  // 设置代理
-
                     .sslSocketFactory(sslContext.getSocketFactory(), trustAllCertificates)  // 设置 SSL
                     .hostnameVerifier((hostname, session) -> {
                         return true;  // 不验证主机名
@@ -79,164 +88,231 @@ public class utils {
         }
         return okHttpClient;
     }
-    
-    public static Proxy getSystemProxy() {
-        String os = System.getProperty("os.name").toLowerCase();
-        Proxy proxy = Proxy.NO_PROXY;
 
-        try {
-            if (os.contains("win")) {
-                // Windows系统检查
-                // 1. 首先检查系统属性
-                String proxyHost = System.getProperty("http.proxyHost");
-                String proxyPort = System.getProperty("http.proxyPort");
+    /**
+     * 调用 reg.exe 读取注册表中某个键值（以字符串形式返回）。
+     * 兼容 Windows XP 及以上。
+     *
+     * @param hive  根键名："HKCU", "HKLM" 等
+     * @param path  子路径，例如 "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings"
+     * @param key   值名称，例如 "ProxyEnable" 或 "ProxyServer"
+     * @return      如果存在则返回值（例如 "0x1"、"proxy.example.com:8080" 等），否则返回 null
+     */
+    public static String readRegistry(String hive, String path, String key) throws IOException {
+        ProcessBuilder pb = new ProcessBuilder("reg", "query",
+                hive + "\\" + path,
+                "/v", key);
+        Process process = pb.start();
 
-                if (proxyHost != null && proxyPort != null) {
-                    try {
-                        int port = Integer.parseInt(proxyPort);
-                        if (port > 0 && port <= 65535) {
-                            return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(proxyHost, port));
-                        }
-                    } catch (NumberFormatException e) {
-                        System.err.println("Invalid proxy port number: " + proxyPort);
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), "GBK"))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                if (line.startsWith(key)) {
+                    // 按空白分割，最后一段即为值
+                    String[] parts = line.split("\\s+");
+                    if (parts.length >= 3) {
+                        return parts[parts.length - 1];
                     }
                 }
-
-                // 2. 检查环境变量
-                String envProxy = System.getenv("HTTP_PROXY");
-                if (envProxy != null && !envProxy.isEmpty()) {
-                    try {
-                        return parseProxyFromString(envProxy);
-                    } catch (Exception e) {
-                        System.err.println("Failed to parse HTTP_PROXY environment variable: " + e.getMessage());
-                    }
-                }
-
-                // 3. 检查Windows注册表
-                try {
-                    // 检查代理是否启用
-                    boolean proxyEnable = Advapi32Util.registryGetIntValue(
-                            WinReg.HKEY_CURRENT_USER,
-                            "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-                            "ProxyEnable"
-                    ) != 0;
-
-                    if (proxyEnable) {
-                        // 获取代理服务器地址
-                        String proxyServer = Advapi32Util.registryGetStringValue(
-                                WinReg.HKEY_CURRENT_USER,
-                                "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
-                                "ProxyServer"
-                        );
-
-                        if (proxyServer != null && !proxyServer.isEmpty()) {
-                            // 处理代理服务器地址
-                            // 可能的格式：
-                            // 1. host:port
-                            // 2. http=host:port;https=host:port;ftp=host:port
-                            if (proxyServer.contains("=")) {
-                                // 包含多个协议的代理设置
-                                for (String proxy0 : proxyServer.split(";")) {
-                                    if (proxy0.startsWith("http=")) {
-                                        proxyServer = proxy0.substring(5);
-                                        break;
-                                    }
-                                }
-                            }
-
-                            try {
-                                System.out.println("Detected system proxy: " + proxyServer);
-                                return parseProxyFromString(proxyServer);
-                            } catch (Exception e) {
-                                System.err.println("Failed to parse registry proxy settings: " + e.getMessage());
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    System.err.println("Failed to read Windows registry: " + e.getMessage());
-                }
-
-            } else if (os.contains("nix") || os.contains("nux") || os.contains("mac")) {
-                // Linux/MacOS系统检查
-                String[] proxyEnvVars = {"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"};
-
-                for (String envVar : proxyEnvVars) {
-                    String proxyUrl = System.getenv(envVar);
-                    if (proxyUrl != null && !proxyUrl.isEmpty()) {
-                        try {
-                            System.out.println("Detected system proxy: " + proxyUrl);
-                            return parseProxyFromString(proxyUrl);
-                        } catch (Exception e) {
-                            System.err.println("Failed to parse " + envVar + ": " + e.getMessage());
-                        }
-                    }
-                }
-            } else {
-                System.out.println("Unknown OS or no system proxy configuration found.");
             }
-        } catch (Exception e) {
-            System.err.println("Error while getting system proxy: " + e.getMessage());
         }
-        return proxy;
+        return null;
     }
 
-    private static Proxy parseProxyFromString(String proxyString) {
-        proxyString = proxyString.trim().toLowerCase();
-        proxyString = proxyString.replaceFirst("^(http|https)://", "");
+    /**
+     * 解析代理字符串，支持：
+     *  - socks=host:port 或 socks5=host:port
+     *  - http=host:port、https=host:port
+     *  - 纯 host:port（默认 HTTP，端口若缺省则用 80）
+     *
+     * @param proxyStr  原始代理配置字符串
+     * @return          java.net.Proxy 对象（Type 为 HTTP 或 SOCKS）
+     */
+    private static Proxy parseProxy(String proxyStr) {
+        String s = proxyStr.trim();
 
-        // 处理认证信息
-        if (proxyString.contains("@")) {
-            proxyString = proxyString.substring(proxyString.lastIndexOf("@") + 1);
+        // 去掉协议前缀（http://、https://、socks://、socks5://）
+        s = s.replaceFirst("(?i)^(http|https|socks5?)://", "");
+
+        // 去掉用户认证信息
+        int at = s.lastIndexOf('@');
+        if (at >= 0) {
+            s = s.substring(at + 1);
         }
 
-        String host;
-        int port;
+        // 默认 HTTP
+        Proxy.Type type = Proxy.Type.HTTP;
 
-        if (proxyString.contains(":")) {
-            String[] parts = proxyString.split(":");
-            host = parts[0];
-            String portStr = parts[1].split("/")[0];
-            port = Integer.parseInt(portStr);
+        // 检查多协议条目形式：socks=...;http=...;...
+        if (s.contains("=") && s.contains(";")) {
+            // 以分号拆分，优先找 socks= 或 socks5=
+            for (String entry : s.split(";")) {
+                String e = entry.trim().toLowerCase();
+                if (e.startsWith("socks5=") || e.startsWith("socks=")) {
+                    type = Proxy.Type.SOCKS;
+                    s = entry.substring(entry.indexOf('=') + 1);
+                    break;
+                } else if (e.startsWith("http=")) {
+                    // 后续若无 socks，才处理 http=
+                    s = entry.substring(entry.indexOf('=') + 1);
+                    type = Proxy.Type.HTTP;
+                }
+            }
         } else {
-            host = proxyString;
-            port = 80; // 默认HTTP代理端口
+            // 单一条目且以 socks= 或 socks5= 开头
+            String low = s.toLowerCase();
+            if (low.startsWith("socks5=") || low.startsWith("socks=")) {
+                type = Proxy.Type.SOCKS;
+                s = s.substring(s.indexOf('=') + 1);
+            }
         }
 
-        if (!host.isEmpty() && port > 0 && port <= 65535) {
-            return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(host, port));
+        // 拆分 host:port
+        String host;
+        int port = (type == Proxy.Type.SOCKS ? 1080 : 80);
+        if (s.contains(":")) {
+            String[] hp = s.split(":", 2);
+            host = hp[0];
+            try {
+                port = Integer.parseInt(hp[1].replaceAll("/.*$", ""));
+            } catch (NumberFormatException ex) {
+                throw new IllegalArgumentException("无效的端口号: " + hp[1], ex);
+            }
+        } else {
+            host = s;
         }
 
-        throw new IllegalArgumentException("Invalid proxy configuration");
+        return new Proxy(type, new InetSocketAddress(host, port));
     }
 
+    /**
+     * 获取 Windows 上的系统代理（HTTP / HTTPS / SOCKS5）。
+     * 优先级：
+     *   1. Java 系统属性 http.proxyHost/http.proxyPort
+     *   2. 环境变量 HTTP_PROXY
+     *   3. 注册表：ProxyEnable + ProxyServer
+     */
+    public static Proxy getWindowsProxy() {
+        // 1. Java 系统属性
+        String propHost = System.getProperty("http.proxyHost");
+        String propPort = System.getProperty("http.proxyPort");
+        if (propHost != null && propPort != null) {
+            try {
+                int port = Integer.parseInt(propPort);
+                if (port > 0 && port <= 65535) {
+                    return new Proxy(Proxy.Type.HTTP, new InetSocketAddress(propHost, port));
+                }
+            } catch (NumberFormatException ignored) { }
+        }
 
-    public static <jsonObject> String GetToken(String longTermToken) {
+        // 2. 环境变量
+        String env = System.getenv("HTTP_PROXY");
+        if (env != null && !env.isEmpty()) {
+            return parseProxy(env);
+        }
+
+        // 3. 注册表
+        String hive = "HKCU";
+        String path = "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings";
+        try {
+            String enable = readRegistry(hive, path, "ProxyEnable");
+            if ("0x1".equalsIgnoreCase(enable) || "1".equals(enable)) {
+                String server = readRegistry(hive, path, "ProxyServer");
+                if (server != null && !server.isEmpty()) {
+                    System.out.println("Detected system proxy from Registry: " + server);
+                    return parseProxy(server);
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("Read Registry Failed: " + e.getMessage());
+        }
+
+        return Proxy.NO_PROXY;
+    }
+
+    /**
+     * 获取 Unix-like (Linux/macOS) 系统代理（HTTP / HTTPS / SOCKS5）。
+     * 检查环境变量（优先级由上至下）：
+     *   socks5_proxy, SOCKS5_PROXY,
+     *   socks_proxy,  SOCKS_PROXY,
+     *   all_proxy,    ALL_PROXY,
+     *   https_proxy,  HTTPS_PROXY,
+     *   http_proxy,   HTTP_PROXY
+     */
+    public static Proxy getUnixProxy() {
+        String[] vars = {
+                "socks5_proxy", "SOCKS5_PROXY",
+                "socks_proxy",  "SOCKS_PROXY",
+                "all_proxy",    "ALL_PROXY",
+                "https_proxy",  "HTTPS_PROXY",
+                "http_proxy",   "HTTP_PROXY"
+        };
+        for (String env : vars) {
+            String val = System.getenv(env);
+            if (val != null && !val.isEmpty()) {
+                return parseProxy(val);
+            }
+        }
+        return Proxy.NO_PROXY;
+    }
+
+    /**
+     * 检测当前操作系统并返回对应的系统代理设置。
+     */
+    public static Proxy getSystemProxy() {
+        String os = System.getProperty("os.name", "").toLowerCase();
+        if (os.contains("win")) {
+            return getWindowsProxy();
+        } else {
+            return getUnixProxy();
+        }
+    }
+
+    public static String GetToken(String longTermToken) {
         try {
             Request request = new Request.Builder()
                     .url("https://api.github.com/copilot_internal/v2/token")
-                    .addHeader("Authorization", "token " + longTermToken)
-                    .addHeader("Editor-Plugin-Version", HeadersInfo.editor_plugin_version)
-                    .addHeader("Editor-Version", HeadersInfo.editor_version)
-                    .addHeader("User-Agent", HeadersInfo.user_agent)
-                    .addHeader("x-github-api-version", HeadersInfo.x_github_api_version)
-                    .addHeader("Sec-Fetch-Site", "none")
-                    .addHeader("Sec-Fetch-Mode", "no-cors")
+                    .addHeader("Connection", "keep-alive")
+                    .addHeader("authorization", "Bearer " + longTermToken)
+                    .addHeader("sec-ch-ua-platform", "\"Windows\"")
+                    .addHeader("Accept", "*/*")
+                    .addHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Code/1.102.3 Chrome/134.0.6998.205 Electron/35.6.0 Safari/537.36")
+                    .addHeader("sec-ch-ua", "\"Not:A-Brand\";v=\"24\", \"Chromium\";v=\"134\"")
+                    .addHeader("sec-ch-ua-mobile", "?0")
+                    .addHeader("Origin", "vscode-file://vscode-app")
+                    .addHeader("Sec-Fetch-Site", "cross-site")
+                    .addHeader("Sec-Fetch-Mode", "cors")
                     .addHeader("Sec-Fetch-Dest", "empty")
+                    .addHeader("Accept-Encoding", "gzip, deflate, br, zstd")
+                    .addHeader("Accept-Language", "zh-CN")
                     .get()
                     .build();
 
             try (Response response = client.newCall(request).execute()) {
-                if (response.isSuccessful()) {
-                    String responseBody = response.body().string();
+                if (response.isSuccessful() && response.body() != null) {
+                    String responseBody = decompressResponse(response);
+
+                    if (responseBody == null || responseBody.isEmpty()) {
+                        System.out.println("Empty response body");
+                        return null;
+                    }
+
+                    if (!responseBody.startsWith("{")) {
+                        System.out.println("Response is not JSON format: " + responseBody);
+                        return null;
+                    }
+
                     JSONObject jsonObject = new JSONObject(responseBody);
+
                     if (jsonObject.has("token")) {
                         String token = jsonObject.getString("token");
                         System.out.println("\nNew Token:\n " + token);
+
                         if (jsonObject.has("endpoints")) {
                             JSONObject endpoints = jsonObject.getJSONObject("endpoints");
                             CompletionHandler.setCopilotChatCompletionsUrl(endpoints.getString("api") + "/chat/completions");
-                            System.out.println("API: " + endpoints.getString("api"));
-
                         }
                         return token;
                     } else {
@@ -245,7 +321,7 @@ public class utils {
                 } else {
                     String errorResponse = null;
                     if (response.body() != null) {
-                        errorResponse = response.body().string();
+                        errorResponse = decompressResponse(response);
                     }
                     System.out.println("Request failed, status code: " + response.code());
                     System.out.println("Response body: " + errorResponse);
@@ -253,8 +329,60 @@ public class utils {
             }
             return null;
         } catch (Exception e) {
+            System.out.println("Cannot get token: " + e.getMessage());
             e.printStackTrace();
             return null;
+        }
+    }
+
+    /**
+     * 根据 Content-Encoding 头解压响应体
+     */
+    private static String decompressResponse(Response response) throws IOException {
+        String contentEncoding = response.header("Content-Encoding");
+        InputStream inputStream = response.body().byteStream();
+
+        try {
+            // 根据压缩格式选择解压方式
+            if (contentEncoding != null) {
+                contentEncoding = contentEncoding.toLowerCase().trim();
+
+                switch (contentEncoding) {
+                    case "gzip":
+                        inputStream = new GZIPInputStream(inputStream);
+                        break;
+
+                    case "deflate":
+                        inputStream = new InflaterInputStream(inputStream);
+                        break;
+
+                    default:
+                        System.err.println("Unknown compression format: " + contentEncoding);
+                        break;
+                }
+            } else {
+                System.out.println("No Content-Encoding header, assuming uncompressed");
+            }
+
+            // 读取解压后的内容
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    sb.append(line).append('\n');
+                }
+
+                // 移除最后一个换行符
+                if (sb.length() > 0 && sb.charAt(sb.length() - 1) == '\n') {
+                    sb.setLength(sb.length() - 1);
+                }
+
+                return sb.toString();
+            }
+        } finally {
+            inputStream.close();
         }
     }
 
@@ -262,9 +390,8 @@ public class utils {
         tokenLock.lock();
         try {
             String tempToken = tokenManager.getTempToken(longTermToken);
-            System.out.println("Login in as:" + tokenManager.getUsername(longTermToken));
+            System.out.println("\n\nLogin in as:" + tokenManager.getUsername(longTermToken));
             if (isTokenExpired(tempToken)) {
-                System.out.println("Token has expired");
                 String newTempToken = utils.GetToken(longTermToken);
                 if (newTempToken == null || newTempToken.isEmpty()) {
                     throw new IOException("Unable to generate a new temporary token.");
@@ -294,7 +421,7 @@ public class utils {
                 os.write(bytes);
             }
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("headers already sent");
         }
     }
 
@@ -415,5 +542,31 @@ public class utils {
             return null;
         }
         return tempToken;
+    }
+
+    /**
+     * 使用 OkHttp 发起 POST 请求并返回 Response
+     */
+    public static Response executeOkHttpRequest(Map<String, String> headers, JSONObject jsonBody, String url) throws IOException {
+        // 构造 RequestBody
+        RequestBody body = RequestBody.create(
+                jsonBody.toString(),
+                MediaType.parse("application/json; charset=utf-8")
+        );
+
+        // 构造请求
+        Request.Builder requestBuilder = new Request.Builder()
+                .url(url)
+                .post(body);
+
+        // 设置请求头
+        for (Map.Entry<String, String> entry : headers.entrySet()) {
+            requestBuilder.addHeader(entry.getKey(), entry.getValue());
+        }
+
+        Request request = requestBuilder.build();
+
+        // 发送请求并返回响应
+        return utils.getOkHttpClient().newCall(request).execute();
     }
 }
