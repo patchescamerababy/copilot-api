@@ -19,27 +19,21 @@ public class Main {
     private static boolean isPort(String arg) {
         return arg != null && NUMBER_PATTERN.matcher(arg).matches();
     }
+
     static {
         // 强制 pure-java 模式必须最早设置
         System.setProperty("sqlite.purejava", "true");
 
         // 处理临时目录：如果默认 temp 包含非 ASCII（比如中文），换成 ASCII-safe 目录
-        String defaultTmp = System.getProperty("java.io.tmpdir");
         System.setProperty("file.encoding", "UTF-8");
 
-
-
-
         try {
+            String defaultTmp = System.getProperty("java.io.tmpdir");
 
             if (containsNonAscii(defaultTmp)) {
                 if (System.getProperty("os.name").toLowerCase().contains("windows")) {
-
-                    // 基于 C:\temp 创建一个唯一子目录
                     Path base = Paths.get("C:\\temp");
-                    if (!Files.exists(base)) {
-                        Files.createDirectories(base);
-                    }
+                    Files.createDirectories(base);
                     Path safeTmp = Files.createTempDirectory(base, "apptmp-");
                     System.setProperty("java.io.tmpdir", safeTmp.toAbsolutePath().toString());
 
@@ -54,26 +48,25 @@ public class Main {
                     OutputStream os = System.out;  // 获取 System.out 的 OutputStream
                     PrintStream ps = new PrintStream(os, true, "GBK");
                     System.setOut(ps);  // 设置新的 System.out 输出流
-
-
-                }else{
+                } else {
                     Path base = Paths.get("/tmp");
                     if (!Files.exists(base)) {
                         Files.createDirectories(base);
                     }
+
                     Path safeTmp = Files.createTempDirectory(base, "apptmp-");
                     System.setProperty("java.io.tmpdir", safeTmp.toAbsolutePath().toString());
                 }
-
-            }else{
-                File tempDir = new File("temp");
+            } else {
+                File tempDir = new File("temp"); // 相对当前目录
                 if (!tempDir.exists()) {
-                    if (!tempDir.mkdir()) {
+                    boolean created = tempDir.mkdir();
+                    if (!created) {
                         System.err.println("Failed to create temp directory.");
                         System.exit(1);
                     }
                 }
-                //get temp directory absolute path
+
                 String tempDirPath = tempDir.getAbsolutePath();
                 System.setProperty("java.io.tmpdir", tempDirPath);
             }
@@ -92,6 +85,7 @@ public class Main {
         }
         return false;
     }
+
     /**
      * Displays help information for the application
      */
@@ -105,12 +99,13 @@ public class Main {
 
     /**
      * Parse command line arguments
+     *
      * @param args Command line arguments
      * @return The port number specified or the default port
      */
     private static int parseArgs(String[] args) {
         int p = port;
-        if(args.length==0) {
+        if (args.length == 0) {
             printHelp();
         }
         for (int i = 0; i < args.length; i++) {
@@ -175,6 +170,7 @@ public class Main {
         }
         return server;
     }
+
     public static void main(String[] args) {
 
         int p = parseArgs(args);
