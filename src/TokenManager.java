@@ -10,11 +10,12 @@ public class TokenManager {
     public TokenManager() {
         // Create table
         String createTableSQL = "CREATE TABLE IF NOT EXISTS tokens ("
-                + "username TEXT NOT NULL, "
                 + "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                + "username TEXT , "
                 + "long_term_token TEXT NOT NULL UNIQUE, "
                 + "temp_token TEXT, "
-                + "temp_token_expiry INTEGER"
+                + "temp_token_expiry INTEGER,"
+                + "machine_id TEXT"
                 + ");";
 
         try (Connection conn = this.connect();
@@ -146,4 +147,53 @@ public class TokenManager {
         }
         return false;
     }
+    /**
+     * 为某个 long_term_token 绑定 machine_id
+     */
+    public boolean setMachineId(String longTermToken, String machineId) {
+        String updateSQL = "UPDATE tokens SET machine_id = ? WHERE long_term_token = ?";
+        try (Connection conn = this.connect();
+             PreparedStatement pstmt = conn.prepareStatement(updateSQL)) {
+            pstmt.setString(1, machineId);
+            pstmt.setString(2, longTermToken);
+            int rows = pstmt.executeUpdate();
+            if (rows > 0) {
+                System.out.println("Machine ID set successfully.\n"+machineId);
+                return true;
+            } else {
+                System.out.println("No record found for token: " + longTermToken);
+            }
+        } catch (SQLException e) {
+            System.out.println("Error setting machine_id: " + e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * 更新某个 long_term_token 的 machine_id（其实和 setMachineId 完全一样）
+     */
+    public boolean updateMachineId(String longTermToken, String newMachineId) {
+        return setMachineId(longTermToken, newMachineId);
+    }
+
+    /**
+     * 根据 long_term_token 查询 machine_id
+     */
+    public String getMachineId(String longTermToken) {
+        String query = "SELECT machine_id FROM tokens WHERE long_term_token = ?";
+        try (Connection conn = this.connect();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+            pstmt.setString(1, longTermToken);
+            ResultSet rs = pstmt.executeQuery();
+            if (rs.next()) {
+                return rs.getString("machine_id");
+            } else {
+                System.out.println("No machine_id for token: " + longTermToken);
+            }
+        } catch (SQLException e) {
+            System.out.println("Error retrieving machine_id: " + e.getMessage());
+        }
+        return null;
+    }
+
 }
