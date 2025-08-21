@@ -15,16 +15,13 @@ import java.util.stream.Collectors;
 
 public class EmbeddingHandler implements HttpHandler {
     public static final String COPILOT_CHAT_EMBEDDINGS_URL = "https://api.individual.githubcopilot.com/embeddings";
-    private final ExecutorService executor = Executors.newFixedThreadPool(10);
+    public static String getCopilotChatEmbeddingsUrl() {
+        return COPILOT_CHAT_EMBEDDINGS_URL;
+    }
+    private final ExecutorService executor = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
 
-    /**
-     * 可以在项目里全局复用一个 OkHttpClient，也可以这样在当前类中静态持有
-     */
-    private static final OkHttpClient okHttpClient = new OkHttpClient.Builder()
-            // 设置连接、读取超时（可根据需要进行调整）
-            .connectTimeout(java.time.Duration.ofSeconds(120))
-            .readTimeout(java.time.Duration.ofSeconds(120))
-            .build();
+
+
 
     @Override
     public void handle(HttpExchange exchange) throws IOException {
@@ -69,9 +66,13 @@ public class EmbeddingHandler implements HttpHandler {
                 System.out.println("Received Embedding Request JSON:");
                 System.out.println(requestBody);
                 JSONObject requestJson = new JSONObject(requestBody);
-
+                // 准备 Headers
+                Map<String, String> headers = HeadersInfo.getCopilotHeaders(authorizationHeader.substring("Bearer ".length()));
+                // 加上用户传入的 Token
+                headers.put("Authorization", "Bearer " + receivedToken);
+                headers.put("openai-intent","copilot-panel");
                 // 发送 Embedding 请求至 GitHub Copilot API
-                handleEmbeddingRequest(exchange, requestJson, receivedToken);
+                handleEmbeddingRequest(exchange, headers, requestJson);
 
             } catch (JSONException e) {
                 e.printStackTrace();
@@ -136,14 +137,10 @@ public class EmbeddingHandler implements HttpHandler {
     /**
      * 负责处理 Embedding 请求：使用 OkHttp 发送给 Copilot 并返回结果
      */
-    private void handleEmbeddingRequest(HttpExchange exchange, JSONObject jsonBody, String receivedToken) throws IOException {
-        // 准备 Headers
-        Map<String, String> headers = HeadersInfo.getCopilotHeaders();
-        // 加上用户传入的 Token
-        headers.put("Authorization", "Bearer " + receivedToken);
+    private void handleEmbeddingRequest(HttpExchange exchange,  Map<String, String> headers,JSONObject jsonBody) throws IOException {
 
         // 用 OkHttp 发起请求
-        try (Response response = executeOkHttpRequest(headers, jsonBody)) {
+        try (Response response = utils.executeOkHttpRequest(headers, jsonBody,getCopilotChatEmbeddingsUrl())) {
             int responseCode = response.code();
             String responseBody = response.body() != null ? response.body().string() : "";
 
@@ -168,29 +165,4 @@ public class EmbeddingHandler implements HttpHandler {
         }
     }
 
-    /**
-     * 使用 OkHttp 发起 POST 请求并返回 Response
-     */
-    private Response executeOkHttpRequest(Map<String, String> headers, JSONObject jsonBody) throws IOException {
-        // 构造 RequestBody
-        RequestBody body = RequestBody.create(
-                jsonBody.toString(),
-                MediaType.parse("application/json; charset=utf-8")
-        );
-
-        // 构造请求
-        Request.Builder requestBuilder = new Request.Builder()
-                .url(COPILOT_CHAT_EMBEDDINGS_URL)
-                .post(body);
-
-        // 设置请求头
-        for (Map.Entry<String, String> entry : headers.entrySet()) {
-            requestBuilder.addHeader(entry.getKey(), entry.getValue());
-        }
-
-        Request request = requestBuilder.build();
-
-        // 同步调用
-        return okHttpClient.newCall(request).execute();
-    }
 }
