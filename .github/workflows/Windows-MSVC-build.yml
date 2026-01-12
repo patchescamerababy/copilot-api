@@ -45,18 +45,30 @@ jobs:
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          setlocal EnableDelayedExpansion
+
           FOR /R src\main\cpp %%G IN (*.cpp) DO (
             echo Compiling %%~nxG...
-            cl.exe /std:c++20 /EHsc /W4 /MT /DWIN32 /D_WINDOWS /DCPPHTTPLIB_OPENSSL_SUPPORT ^
+            cl.exe /std:c++20 /EHsc /W4 /MT ^
+              /DWIN32 /D_WINDOWS /DCPPHTTPLIB_OPENSSL_SUPPORT ^
+              /D_WIN32_WINNT=0x0A00 /DWINVER=0x0A00 /DNTDDI_VERSION=0x0A000000 ^
               /I"%GITHUB_WORKSPACE%\include" ^
               /I"%GITHUB_WORKSPACE%\vcpkg\installed\x64-windows-static\include" ^
               /c "%%G" /Fo"build\obj\%%~nG.obj"
+
+            if errorlevel 1 exit /b 1
           )
+
           echo Linking...
-          link.exe /OUT:build\bin\Copilot-api-MSVC.exe build\obj\*.obj ^
+          set "OBJS="
+          for %%O in (build\obj\*.obj) do set "OBJS=!OBJS! %%O"
+
+          link.exe /SUBSYSTEM:CONSOLE /OUT:build\bin\Copilot-api-MSVC.exe !OBJS! ^
             /LIBPATH:"%GITHUB_WORKSPACE%\vcpkg\installed\x64-windows-static\lib" ^
             libcurl.lib libssl.lib libcrypto.lib sqlite3.lib zlib.lib ^
             ws2_32.lib crypt32.lib wldap32.lib normaliz.lib user32.lib gdi32.lib advapi32.lib
+
+          endlocal
 
       - name: Install 7zip
         shell: bash

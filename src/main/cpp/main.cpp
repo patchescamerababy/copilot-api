@@ -15,6 +15,19 @@
 #include <ctime>
 
 #ifdef _WIN32
+// 避免 <windows.h> 引入旧版 winsock.h，和 cpp-httplib / libcurl 使用的 winsock2.h 冲突
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef _WINSOCKAPI_
+#define _WINSOCKAPI_ // 阻止 windows.h 包含 winsock.h
+#endif
+
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #endif
 
