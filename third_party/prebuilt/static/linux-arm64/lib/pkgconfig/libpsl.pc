@@ -1,0 +1,12 @@
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libpsl
+Description: Public Suffix List C library.
+Version: 0.21.5
+URL: https://github.com/rockdaboot/libpsl
+Libs: -L${libdir} -lpsl -lidn2 -lunistring
+Requires.private: libidn2 libunistring
+Cflags: -I${includedir}
