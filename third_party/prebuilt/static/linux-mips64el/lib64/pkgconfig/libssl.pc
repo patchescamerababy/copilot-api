@@ -1,0 +1,11 @@
+prefix=/home/runner/work/copilot-api/copilot-api/third_party/prefix/static/linux-mips64el
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib64
+includedir=${prefix}/include 
+
+Name: OpenSSL-libssl
+Description: Secure Sockets Layer and cryptography libraries
+Version: 3.5.3
+Requires.private: libcrypto
+Libs: -L${libdir} -lssl
+Cflags: -I${includedir}
