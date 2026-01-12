@@ -1412,8 +1412,8 @@ jobs:
           $CXX build/obj/*.o -o build/bin/${{ env.APP_NAME }}-windows-x64.exe \
             -static -static-libgcc -static-libstdc++ \
             $LIB_FLAGS \
-            -lcurl -lsqlite3 -lnghttp2 -lzstd -lz \
-            -lws2_32 -lwinmm -lcrypt32 -lbcrypt -lsecur32 -lwldap32 -liphlpapi -lnormaliz
+            -lcurl -lssl -lcrypto -lsqlite3 -lnghttp2 -lz -lzstd \
+            -lwinpthread -lws2_32 -lcrypt32 -lbcrypt -lwinmm -lgdi32
 
           $STRIP build/bin/${{ env.APP_NAME }}-windows-x64.exe || true
 
