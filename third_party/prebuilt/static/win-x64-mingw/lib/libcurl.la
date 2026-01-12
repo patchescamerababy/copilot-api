@@ -17,7 +17,7 @@ old_library='libcurl.a'
 inherited_linker_flags=' -pthread'
 
 # Libraries that this one depends upon.
-dependency_libs=' /usr/x86_64-w64-mingw32/static/lib/libnghttp2.la -lbcrypt -ladvapi32 -lssl -lcrypto -lcrypt32 -lgdi32 -lzstd -lz -lws2_32 -L/usr/x86_64-w64-mingw32/static/lib'
+dependency_libs=' /usr/x86_64-w64-mingw32/static/lib/libnghttp2.la -lbcrypt -ladvapi32 -lssl -lcrypto -lcrypt32 -lgdi32 -lzstd -lz -lws2_32 -L/usr/x86_64-w64-mingw32/static/lib -L/usr/x86_64-w64-mingw32/static/lib64'
 
 # Names of additional weak libraries provided by this library
 weak_library_names=''
