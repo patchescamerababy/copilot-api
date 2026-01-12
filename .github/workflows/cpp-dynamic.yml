@@ -442,7 +442,12 @@ jobs:
             exit 0
           fi
           git commit -m "chore: update win-arm64 deps cache"
-          git push
+          for i in 1 2 3; do
+            git fetch origin main
+            git rebase origin/main || { git rebase --abort; exit 1; }
+            git push origin HEAD:main && break
+            sleep 2
+          done
 
       - name: Build (Windows ARM64, MinGW aarch64-w64-mingw32-g++)
         shell: bash
