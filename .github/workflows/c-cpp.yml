@@ -37,7 +37,6 @@ jobs:
         run: |
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
-          # 只恢复我们项目需要的 deps（避免把 /usr/local/include 整个目录塞进仓库，导致 git add/commit 极慢甚至“卡死”）
           if [ -d "$repo/include" ] && [ -d "$repo/lib" ]; then
             echo "Using cached deps from repo: $repo"
 
