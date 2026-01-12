@@ -37,11 +37,13 @@ jobs:
         run: |
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
+          # 只恢复我们项目需要的 deps（避免把 /usr/local/include 整个目录塞进仓库，导致 git add/commit 极慢甚至“卡死”）
           if [ -d "$repo/include" ] && [ -d "$repo/lib" ]; then
             echo "Using cached deps from repo: $repo"
 
             sudo mkdir -p /usr/local/include /usr/local/lib /usr/local/lib/pkgconfig /usr/local/lib64/pkgconfig
 
+            # headers
             sudo cp -a "$repo/include/httplib.h" /usr/local/include/ 2>/dev/null || true
             sudo mkdir -p /usr/local/include/nlohmann
             sudo cp -a "$repo/include/nlohmann/json.hpp" /usr/local/include/nlohmann/ 2>/dev/null || true
@@ -54,12 +56,14 @@ jobs:
             sudo cp -a "$repo/include/zstd.h" /usr/local/include/ 2>/dev/null || true
             sudo cp -a "$repo/include/libpsl.h" /usr/local/include/ 2>/dev/null || true
 
+            # libs
             sudo cp -a "$repo/lib/." /usr/local/lib/ 2>/dev/null || true
             if [ -d "$repo/lib64" ]; then
               sudo mkdir -p /usr/local/lib64
               sudo cp -a "$repo/lib64/." /usr/local/lib64/ 2>/dev/null || true
             fi
 
+            # pkg-config
             if [ -d "$repo/lib/pkgconfig" ]; then
               sudo cp -a "$repo/lib/pkgconfig/." /usr/local/lib/pkgconfig/ 2>/dev/null || true
               sudo cp -a "$repo/lib/pkgconfig/." /usr/local/lib64/pkgconfig/ 2>/dev/null || true
@@ -76,34 +80,40 @@ jobs:
         run: |
           set -e
           mkdir deps && cd deps
+          # ---------- zstd：仅静态库，避免 __TMC_END__ ----------
           wget -q https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
           tar -zxf zstd-1.5.7.tar.gz
           cd  zstd-1.5.7
           make -C lib -j"$(nproc)" libzstd.a
           sudo make -C lib PREFIX=/usr/local install-static install-pc
           cd ..
+          # ---------- 全局静态编译环境 ----------
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig"
           export CPPFLAGS="-I/usr/local/include"
           export LDFLAGS="-static -L/usr/local/lib -L/usr/local/lib64"
+          # zlib
           wget -q https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -zxf zlib-1.3.1.tar.gz
           cd zlib-1.3.1
           ./configure --static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+          # OpenSSL 3.5.3（含 QUIC APIv2）
           wget -q https://github.com/openssl/openssl/releases/download/openssl-3.5.3/openssl-3.5.3.tar.gz
           tar -zxf openssl-3.5.3.tar.gz
           cd openssl-3.5.3
           ./Configure linux-x86_64 no-shared --prefix=/usr/local
           make -j"$(nproc)"; sudo make install_sw
           cd ..
+          # SQLite3
           wget -q https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz
           tar -zxf sqlite-autoconf-3500400.tar.gz
           cd sqlite-autoconf-3500400
           ./configure --disable-shared --enable-static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+          # nghttp2
           wget -q https://github.com/nghttp2/nghttp2/releases/download/v1.67.1/nghttp2-1.67.1.tar.xz
           tar -xf nghttp2-1.67.1.tar.xz
           cd nghttp2-1.67.1
@@ -111,12 +121,14 @@ jobs:
           ./configure --disable-shared --enable-static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+          # ---------- libunistring → libidn2 → libpsl ----------
           wget -q https://ftp.gnu.org/gnu/libunistring/libunistring-1.2.tar.xz
           tar -xf libunistring-1.2.tar.xz
           cd libunistring-1.2
           ./configure --disable-shared --enable-static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+          # 生成 libunistring.pc（上游不自带）
           sudo mkdir -p /usr/local/lib/pkgconfig
           sudo tee /usr/local/lib/pkgconfig/libunistring.pc >/dev/null <<EOF
           prefix=/usr/local
@@ -129,6 +141,7 @@ jobs:
           Libs: -L\${libdir} -lunistring
           Cflags: -I\${includedir}
           EOF
+          # 兼容某些脚本只搜 /usr/local/lib64/pkgconfig 的情况
           sudo mkdir -p /usr/local/lib64/pkgconfig
           sudo cp /usr/local/lib/pkgconfig/libunistring.pc /usr/local/lib64/pkgconfig/
           wget -q https://ftp.gnu.org/gnu/libidn/libidn2-2.3.7.tar.gz
@@ -143,25 +156,38 @@ jobs:
           ./configure --disable-shared --enable-static --disable-icu --enable-runtime=libidn2 --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+          # ---------- 修复 libpsl.pc，确保包含所有依赖 ----------
           pc=/usr/local/lib/pkgconfig/libpsl.pc
           sudo sed -i '/^Requires.private:/d' "$pc"
           sudo sed -i '/^Libs:/a Requires.private: libidn2 libunistring' "$pc"
           if ! grep -q -- '-lidn2' "$pc"; then
             sudo sed -i 's|^Libs:.*|& -lidn2 -lunistring|' "$pc"
           fi
+
+          # ---------- 复制 .pc 文件到 lib64，curl configure 会强制搜索这里 ----------
           sudo mkdir -p /usr/local/lib64/pkgconfig
           sudo cp /usr/local/lib/pkgconfig/*.pc /usr/local/lib64/pkgconfig/
+          # ---------- 验证 pkg-config ----------
           echo "libpsl cflags : $(pkg-config --cflags libpsl)"
           echo "libpsl libs   : $(pkg-config --static --libs libpsl)"
+          # ---------- 手动验证链接测试 ----------
           echo '#include <libpsl.h>' > test_libpsl.c
           echo 'int main() { psl_builtin(); return 0; }' >> test_libpsl.c
-          gcc -static test_libpsl.c $(pkg-config --static --libs libpsl) $(pkg-config --cflags libpsl) -o test_libpsl
-          ./test_libpsl
+          if gcc -static test_libpsl.c $(pkg-config --static --libs libpsl) $(pkg-config --cflags libpsl) -o test_libpsl; then
+            echo "✓ libpsl links successfully"
+            ./test_libpsl && echo "✓ libpsl test runs successfully"
+          else
+            echo "✗ libpsl linking failed"
+            exit 1
+          fi
+          # ---------- 设置 curl 构建环境，使用 pkg-config --static ----------
           export CPPFLAGS="$CPPFLAGS $($PKG_CONFIG --cflags libpsl)"
           export LIBS="$($PKG_CONFIG --libs libpsl) $LIBS"
+          # curl 8.16.0 全静态
           wget -q https://curl.se/download/curl-8.16.0.tar.xz
           tar -xf curl-8.16.0.tar.xz
           cd curl-8.16.0
+
           ./configure --disable-shared --enable-static \
                       --with-ssl=/usr/local \
                       --with-zlib=/usr/local \
@@ -188,11 +214,16 @@ jobs:
         run: |
           set -e
           dst="$PWD/${REPO_DEPS_DIR}"
+
+          # 关键：先删除旧目录再重建（你提到的“需要先删除文件夹”是对的）
           rm -rf "$dst"
           mkdir -p "$dst/include" "$dst/lib" "$dst/lib/pkgconfig"
+
+          # 只保存项目实际用到的 headers/libs（避免把 /usr/local/include 全量提交，导致卡死）
           sudo cp -a /usr/local/include/httplib.h "$dst/include/" 2>/dev/null || true
           sudo mkdir -p "$dst/include/nlohmann"
           sudo cp -a /usr/local/include/nlohmann/json.hpp "$dst/include/nlohmann/" 2>/dev/null || true
+
           sudo mkdir -p "$dst/include/openssl" "$dst/include/nghttp2"
           sudo cp -a /usr/local/include/openssl/. "$dst/include/openssl/" 2>/dev/null || true
           sudo cp -a /usr/local/include/nghttp2/. "$dst/include/nghttp2/" 2>/dev/null || true
@@ -201,6 +232,8 @@ jobs:
           sudo cp -a /usr/local/include/zlib.h /usr/local/include/zconf.h "$dst/include/" 2>/dev/null || true
           sudo cp -a /usr/local/include/zstd.h "$dst/include/" 2>/dev/null || true
           sudo cp -a /usr/local/include/libpsl.h "$dst/include/" 2>/dev/null || true
+
+          # libs（只收集静态库 + 少量必要文件）
           for f in \
             libcurl.a libssl.a libcrypto.a libsqlite3.a libnghttp2.a libzstd.a libz.a \
             libpsl.a libidn2.a libunistring.a; do
@@ -212,56 +245,84 @@ jobs:
               sudo cp -a "/usr/local/lib64/$f" "$dst/lib64/"
             fi
           done
+
+          # pkg-config（供 curl/libpsl 静态链接解析依赖）
           if [ -d /usr/local/lib/pkgconfig ]; then
             sudo cp -a /usr/local/lib/pkgconfig/*.pc "$dst/lib/pkgconfig/" 2>/dev/null || true
           fi
+
           sudo chown -R "$USER":"$USER" "$dst"
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git checkout "$GITHUB_REF_NAME"
           git pull --rebase origin "$GITHUB_REF_NAME"
+
           git add "$REPO_DEPS_DIR"
-          git diff --cached --quiet && exit 0
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
           git commit -m "chore: update prebuilt deps (linux-x64-static)"
           for i in 1 2 3; do
             git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
             git fetch origin "$GITHUB_REF_NAME"
             git rebase "origin/$GITHUB_REF_NAME"
-            [ "$i" = "3" ] && exit 1
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
           done
 
       - name: Build (Linux x86_64 static)
         shell: bash
         run: |
           set -e
+      
+          # 确保使用我们编译的库，而不是系统库
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig"
           export LD_LIBRARY_PATH="/usr/local/lib64:/usr/local/lib:$LD_LIBRARY_PATH"
+      
           mkdir -p build/obj build/bin
+      
           INC_FLAGS="-I/usr/local/include"
           LIB_FLAGS="-static -L/usr/local/lib64 -L/usr/local/lib"
+      
+          # 编译
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             g++ -std=c++20 -O3 -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
-              $INC_FLAGS -c "$cpp_file" -o "$obj_file"
+              $INC_FLAGS \
+              -c "$cpp_file" -o "$obj_file"
           done
-          g++ build/obj/*.o -o "build/bin/${APP_NAME}-linux-x64" \
+      
+          # 链接（全静态）
+          g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-linux-x64 \
             -static -static-libgcc -static-libstdc++ \
             $LIB_FLAGS \
             -lcurl -lpsl -lidn2 -lunistring \
             -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lz \
             -lresolv -lpthread -ldl
-          strip "build/bin/${APP_NAME}-linux-x64" || true
+      
+          strip build/bin/${{ env.APP_NAME }}-linux-x64 || true
+
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-x64
+          name: ${{ env.APP_NAME }}-linux-static
           path: build/bin/${{ env.APP_NAME }}-linux-x64
 
 ###############################################################################
-# 1b. Linux ARM64（原生 ARM Runner）
+# 1b. Linux ARM64 交叉编译（glibc，全静态，带 libpsl）
+#     - 增加“仓库二进制依赖缓存”：third_party/prebuilt/static/linux-arm64
 ###############################################################################
   build-linux-arm64:
+    # 使用原生 ARM64 Runner（不再交叉编译）
+    # 需要 GitHub Hosted Runner 支持：ubuntu-24.04-arm
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: write
@@ -287,9 +348,13 @@ jobs:
         run: |
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
+          # 只恢复我们项目需要的 deps（同 x86_64 job 逻辑）
           if [ -d "$repo/include" ] && [ -d "$repo/lib" ]; then
             echo "Using cached deps from repo: $repo"
+
             sudo mkdir -p /usr/local/include /usr/local/lib /usr/local/lib/pkgconfig /usr/local/lib64/pkgconfig
+
+            # headers
             sudo cp -a "$repo/include/httplib.h" /usr/local/include/ 2>/dev/null || true
             sudo mkdir -p /usr/local/include/nlohmann
             sudo cp -a "$repo/include/nlohmann/json.hpp" /usr/local/include/nlohmann/ 2>/dev/null || true
@@ -301,17 +366,23 @@ jobs:
             sudo cp -a "$repo/include/zlib.h" "$repo/include/zconf.h" /usr/local/include/ 2>/dev/null || true
             sudo cp -a "$repo/include/zstd.h" /usr/local/include/ 2>/dev/null || true
             sudo cp -a "$repo/include/libpsl.h" /usr/local/include/ 2>/dev/null || true
+
+            # libs
             sudo cp -a "$repo/lib/." /usr/local/lib/ 2>/dev/null || true
             if [ -d "$repo/lib64" ]; then
               sudo mkdir -p /usr/local/lib64
               sudo cp -a "$repo/lib64/." /usr/local/lib64/ 2>/dev/null || true
             fi
+
+            # pkg-config
             if [ -d "$repo/lib/pkgconfig" ]; then
               sudo cp -a "$repo/lib/pkgconfig/." /usr/local/lib/pkgconfig/ 2>/dev/null || true
               sudo cp -a "$repo/lib/pkgconfig/." /usr/local/lib64/pkgconfig/ 2>/dev/null || true
             fi
+
             echo "use_cache=true" >> $GITHUB_OUTPUT
           else
+            echo "No cached deps found; will build deps."
             echo "use_cache=false" >> $GITHUB_OUTPUT
           fi
 
@@ -321,34 +392,46 @@ jobs:
         run: |
           set -e
           mkdir deps && cd deps
+
+          # ---------- zstd：仅静态库，避免 __TMC_END__ ----------
           wget -q https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
           tar -zxf zstd-1.5.7.tar.gz
           cd  zstd-1.5.7
           make -C lib -j"$(nproc)" libzstd.a
           sudo make -C lib PREFIX=/usr/local install-static install-pc
           cd ..
+
+          # ---------- 全局静态编译环境 ----------
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig"
           export CPPFLAGS="-I/usr/local/include"
           export LDFLAGS="-static -L/usr/local/lib -L/usr/local/lib64"
+
+          # zlib
           wget -q https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -zxf zlib-1.3.1.tar.gz
           cd zlib-1.3.1
           ./configure --static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+
+          # OpenSSL 3.5.3
           wget -q https://github.com/openssl/openssl/releases/download/openssl-3.5.3/openssl-3.5.3.tar.gz
           tar -zxf openssl-3.5.3.tar.gz
           cd openssl-3.5.3
           ./Configure linux-aarch64 no-shared --prefix=/usr/local
           make -j"$(nproc)"; sudo make install_sw
           cd ..
+
+          # SQLite3
           wget -q https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz
           tar -zxf sqlite-autoconf-3500400.tar.gz
           cd sqlite-autoconf-3500400
           ./configure --disable-shared --enable-static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+
+          # nghttp2
           wget -q https://github.com/nghttp2/nghttp2/releases/download/v1.67.1/nghttp2-1.67.1.tar.xz
           tar -xf nghttp2-1.67.1.tar.xz
           cd nghttp2-1.67.1
@@ -356,12 +439,16 @@ jobs:
           ./configure --disable-shared --enable-static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+
+          # ---------- libunistring → libidn2 → libpsl ----------
           wget -q https://ftp.gnu.org/gnu/libunistring/libunistring-1.2.tar.xz
           tar -xf libunistring-1.2.tar.xz
           cd libunistring-1.2
           ./configure --disable-shared --enable-static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+
+          # 生成 libunistring.pc（上游不自带）
           sudo mkdir -p /usr/local/lib/pkgconfig
           sudo tee /usr/local/lib/pkgconfig/libunistring.pc >/dev/null <<EOF
           prefix=/usr/local
@@ -376,31 +463,57 @@ jobs:
           EOF
           sudo mkdir -p /usr/local/lib64/pkgconfig
           sudo cp /usr/local/lib/pkgconfig/libunistring.pc /usr/local/lib64/pkgconfig/
+
           wget -q https://ftp.gnu.org/gnu/libidn/libidn2-2.3.7.tar.gz
           tar -zxf libidn2-2.3.7.tar.gz
           cd libidn2-2.3.7
           ./configure --disable-shared --enable-static --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+
           wget -q https://github.com/rockdaboot/libpsl/releases/download/0.21.5/libpsl-0.21.5.tar.gz
           tar -zxf libpsl-0.21.5.tar.gz
           cd libpsl-0.21.5
           ./configure --disable-shared --enable-static --disable-icu --enable-runtime=libidn2 --prefix=/usr/local
           make -j"$(nproc)"; sudo make install
           cd ..
+
+          # ---------- 修复 libpsl.pc，确保包含所有依赖 ----------
           pc=/usr/local/lib/pkgconfig/libpsl.pc
           sudo sed -i '/^Requires.private:/d' "$pc"
           sudo sed -i '/^Libs:/a Requires.private: libidn2 libunistring' "$pc"
           if ! grep -q -- '-lidn2' "$pc"; then
             sudo sed -i 's|^Libs:.*|& -lidn2 -lunistring|' "$pc"
           fi
+
+          # ---------- 复制 .pc 文件到 lib64，curl configure 会强制搜索这里 ----------
           sudo mkdir -p /usr/local/lib64/pkgconfig
           sudo cp /usr/local/lib/pkgconfig/*.pc /usr/local/lib64/pkgconfig/
+
+          # ---------- 验证 pkg-config ----------
+          echo "libpsl cflags : $(pkg-config --cflags libpsl)"
+          echo "libpsl libs   : $(pkg-config --static --libs libpsl)"
+
+          # ---------- 手动验证链接测试 ----------
+          echo '#include <libpsl.h>' > test_libpsl.c
+          echo 'int main() { psl_builtin(); return 0; }' >> test_libpsl.c
+          if gcc -static test_libpsl.c $(pkg-config --static --libs libpsl) $(pkg-config --cflags libpsl) -o test_libpsl; then
+            echo "✓ libpsl links successfully"
+            ./test_libpsl && echo "✓ libpsl test runs successfully"
+          else
+            echo "✗ libpsl linking failed"
+            exit 1
+          fi
+
+          # ---------- 设置 curl 构建环境，使用 pkg-config --static ----------
           export CPPFLAGS="$CPPFLAGS $($PKG_CONFIG --cflags libpsl)"
           export LIBS="$($PKG_CONFIG --libs libpsl) $LIBS"
+
+          # curl 8.16.0 全静态
           wget -q https://curl.se/download/curl-8.16.0.tar.xz
           tar -xf curl-8.16.0.tar.xz
           cd curl-8.16.0
+
           ./configure --disable-shared --enable-static \
                       --with-ssl=/usr/local \
                       --with-zlib=/usr/local \
@@ -422,35 +535,111 @@ jobs:
           git clone --depth=1 https://github.com/nlohmann/json.git
           sudo cp json/single_include/nlohmann/json.hpp /usr/local/include/nlohmann/
 
+      - name: Save prebuilt deps to repo (git commit/push) (Linux ARM64)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          dst="$PWD/${REPO_DEPS_DIR}"
+
+          rm -rf "$dst"
+          mkdir -p "$dst/include" "$dst/lib" "$dst/lib/pkgconfig"
+
+          # headers
+          sudo cp -a /usr/local/include/httplib.h "$dst/include/" 2>/dev/null || true
+          sudo mkdir -p "$dst/include/nlohmann"
+          sudo cp -a /usr/local/include/nlohmann/json.hpp "$dst/include/nlohmann/" 2>/dev/null || true
+          sudo mkdir -p "$dst/include/openssl" "$dst/include/nghttp2"
+          sudo cp -a /usr/local/include/openssl/. "$dst/include/openssl/" 2>/dev/null || true
+          sudo cp -a /usr/local/include/nghttp2/. "$dst/include/nghttp2/" 2>/dev/null || true
+          sudo cp -a /usr/local/include/curl "$dst/include/" 2>/dev/null || true
+          sudo cp -a /usr/local/include/sqlite3.h /usr/local/include/sqlite3ext.h "$dst/include/" 2>/dev/null || true
+          sudo cp -a /usr/local/include/zlib.h /usr/local/include/zconf.h "$dst/include/" 2>/dev/null || true
+          sudo cp -a /usr/local/include/zstd.h "$dst/include/" 2>/dev/null || true
+          sudo cp -a /usr/local/include/libpsl.h "$dst/include/" 2>/dev/null || true
+
+          # libs
+          for f in \
+            libcurl.a libssl.a libcrypto.a libsqlite3.a libnghttp2.a libzstd.a libz.a \
+            libpsl.a libidn2.a libunistring.a; do
+            if [ -f "/usr/local/lib/$f" ]; then
+              sudo cp -a "/usr/local/lib/$f" "$dst/lib/"
+            fi
+            if [ -f "/usr/local/lib64/$f" ]; then
+              mkdir -p "$dst/lib64"
+              sudo cp -a "/usr/local/lib64/$f" "$dst/lib64/"
+            fi
+          done
+
+          # pkg-config
+          if [ -d /usr/local/lib/pkgconfig ]; then
+            sudo cp -a /usr/local/lib/pkgconfig/*.pc "$dst/lib/pkgconfig/" 2>/dev/null || true
+          fi
+
+          sudo chown -R "$USER":"$USER" "$dst"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+
+          git add "$REPO_DEPS_DIR"
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update prebuilt deps (linux-arm64-static)"
+          for i in 1 2 3; do
+            git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
+          done
+
       - name: Build (Linux ARM64 static, native)
         shell: bash
         run: |
           set -e
+
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig"
+          export LD_LIBRARY_PATH="/usr/local/lib64:/usr/local/lib:$LD_LIBRARY_PATH"
+
           mkdir -p build/obj build/bin
+
           INC_FLAGS="-I/usr/local/include"
           LIB_FLAGS="-static -L/usr/local/lib64 -L/usr/local/lib"
+
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             g++ -std=c++20 -O3 -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
-              $INC_FLAGS -c "$cpp_file" -o "$obj_file"
+              $INC_FLAGS \
+              -c "$cpp_file" -o "$obj_file"
           done
-          g++ build/obj/*.o -o "build/bin/${APP_NAME}-linux-arm64" \
+
+          g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-linux-arm64 \
             -static -static-libgcc -static-libstdc++ \
             $LIB_FLAGS \
             -lcurl -lpsl -lidn2 -lunistring \
             -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lz \
             -lresolv -lpthread -ldl
-          strip "build/bin/${APP_NAME}-linux-arm64" || true
+
+          strip build/bin/${{ env.APP_NAME }}-linux-arm64 || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-arm64
+          name: ${{ env.APP_NAME }}-linux-arm64-static
           path: build/bin/${{ env.APP_NAME }}-linux-arm64
 
 ###############################################################################
-# 1c. Linux RISC-V 64（交叉编译）
+# 1c. Linux RISC-V 64 交叉编译（glibc，全静态，带 libpsl）
+#     - 使用 Debian/Ubuntu cross toolchain：riscv64-linux-gnu
 ###############################################################################
   build-linux-riscv64:
     runs-on: ubuntu-latest
@@ -481,11 +670,14 @@ jobs:
         run: |
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
+
           if [ -d "$repo/include" ] && [ -d "$repo/lib" ]; then
+            echo "Using cached deps from repo: $repo"
             echo "DEPS_PREFIX=$repo" >> $GITHUB_ENV
             echo "use_cache=true" >> $GITHUB_OUTPUT
           else
             build="$PWD/third_party/prefix/static/linux-riscv64"
+            echo "No cached deps found; will build deps into: $build"
             echo "DEPS_PREFIX=$build" >> $GITHUB_ENV
             echo "use_cache=false" >> $GITHUB_OUTPUT
           fi
@@ -497,6 +689,7 @@ jobs:
           set -e
           TARGET="${TARGET_TRIPLE}"
           PREFIX="$DEPS_PREFIX"
+
           rm -rf "$PREFIX"
           mkdir -p "$PREFIX"
 
@@ -513,6 +706,7 @@ jobs:
 
           mkdir -p deps && cd deps
 
+          # zstd (static only)
           wget -q https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
           tar -zxf zstd-1.5.7.tar.gz
           cd zstd-1.5.7
@@ -520,6 +714,7 @@ jobs:
           make -C lib PREFIX="$PREFIX" install-static install-pc install-includes
           cd ..
 
+          # zlib
           wget -q https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -zxf zlib-1.3.1.tar.gz
           cd zlib-1.3.1
@@ -528,14 +723,18 @@ jobs:
           make install
           cd ..
 
+          # OpenSSL (static)
           wget -q https://github.com/openssl/openssl/releases/download/openssl-3.5.3/openssl-3.5.3.tar.gz
           tar -zxf openssl-3.5.3.tar.gz
           cd openssl-3.5.3
+          # NOTE: Do NOT pass --cross-compile-prefix when CC is already a prefixed cross-compiler,
+          # otherwise OpenSSL Makefile will call $(CROSS_COMPILE)$(CC) -> riscv64-linux-gnu-riscv64-linux-gnu-gcc (not found)
           ./Configure linux64-riscv64 no-shared --prefix="$PREFIX"
           make -j"$(nproc)"
           make install_sw
           cd ..
 
+          # sqlite3
           wget -q https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz
           tar -zxf sqlite-autoconf-3500400.tar.gz
           cd sqlite-autoconf-3500400
@@ -544,6 +743,7 @@ jobs:
           make install
           cd ..
 
+          # nghttp2
           wget -q https://github.com/nghttp2/nghttp2/releases/download/v1.67.1/nghttp2-1.67.1.tar.xz
           tar -xf nghttp2-1.67.1.tar.xz
           cd nghttp2-1.67.1
@@ -553,6 +753,7 @@ jobs:
           make install
           cd ..
 
+          # libunistring → libidn2 → libpsl
           wget -q https://ftp.gnu.org/gnu/libunistring/libunistring-1.2.tar.xz
           tar -xf libunistring-1.2.tar.xz
           cd libunistring-1.2
@@ -561,6 +762,7 @@ jobs:
           make install
           cd ..
 
+          # generate libunistring.pc
           mkdir -p "$PREFIX/lib/pkgconfig" "$PREFIX/lib64/pkgconfig"
           cat > "$PREFIX/lib/pkgconfig/libunistring.pc" <<EOF
           prefix=$PREFIX
@@ -598,6 +800,7 @@ jobs:
           fi
           cp -a "$PREFIX/lib/pkgconfig/"*.pc "$PREFIX/lib64/pkgconfig/" 2>/dev/null || true
 
+          # curl (static)
           wget -q https://curl.se/download/curl-8.16.0.tar.xz
           tar -xf curl-8.16.0.tar.xz
           cd curl-8.16.0
@@ -626,37 +829,81 @@ jobs:
           git clone --depth=1 https://github.com/nlohmann/json.git
           cp json/single_include/nlohmann/json.hpp "$PREFIX/include/nlohmann/"
 
+      - name: Save prebuilt deps to repo (git commit/push) (Linux riscv64)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          src="$DEPS_PREFIX"
+          dst="$PWD/${REPO_DEPS_DIR}"
+
+          rm -rf "$dst"
+          mkdir -p "$(dirname "$dst")"
+          cp -R "$src" "$dst"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+
+          git add "$REPO_DEPS_DIR"
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update prebuilt deps (linux-riscv64-static)"
+          for i in 1 2 3; do
+            git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
+          done
+
       - name: Build (Linux riscv64 static, cross)
         shell: bash
         run: |
           set -e
           TARGET="${TARGET_TRIPLE}"
           PREFIX="$DEPS_PREFIX"
+
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig"
+
           mkdir -p build/obj build/bin
+
           INC_FLAGS="-I$PREFIX/include"
           LIB_FLAGS="-static -L$PREFIX/lib -L$PREFIX/lib64"
+
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             ${TARGET}-g++ -std=c++20 -O3 -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
-              $INC_FLAGS -c "$cpp_file" -o "$obj_file"
+              $INC_FLAGS \
+              -c "$cpp_file" -o "$obj_file"
           done
-          ${TARGET}-g++ build/obj/*.o -o "build/bin/${APP_NAME}-linux-riscv64" \
+
+          ${TARGET}-g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-linux-riscv64 \
             -static -static-libgcc -static-libstdc++ \
             $LIB_FLAGS \
             -lcurl -lpsl -lidn2 -lunistring \
             -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lz \
             -lresolv -lpthread -ldl
-          ${TARGET}-strip "build/bin/${APP_NAME}-linux-riscv64" || true
+
+          ${TARGET}-strip build/bin/${{ env.APP_NAME }}-linux-riscv64 || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-riscv64
+          name: ${{ env.APP_NAME }}-linux-riscv64-static
           path: build/bin/${{ env.APP_NAME }}-linux-riscv64
 
 ###############################################################################
-# 1d. Linux MIPS64EL（交叉编译）
+# 1d. Linux MIPS64EL 交叉编译（glibc，全静态，带 libpsl）
+#     - 使用 Debian/Ubuntu cross toolchain：mips64el-linux-gnuabi64
 ###############################################################################
   build-linux-mips64el:
     runs-on: ubuntu-latest
@@ -687,11 +934,14 @@ jobs:
         run: |
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
+
           if [ -d "$repo/include" ] && [ -d "$repo/lib" ]; then
+            echo "Using cached deps from repo: $repo"
             echo "DEPS_PREFIX=$repo" >> $GITHUB_ENV
             echo "use_cache=true" >> $GITHUB_OUTPUT
           else
             build="$PWD/third_party/prefix/static/linux-mips64el"
+            echo "No cached deps found; will build deps into: $build"
             echo "DEPS_PREFIX=$build" >> $GITHUB_ENV
             echo "use_cache=false" >> $GITHUB_OUTPUT
           fi
@@ -703,6 +953,7 @@ jobs:
           set -e
           TARGET="${TARGET_TRIPLE}"
           PREFIX="$DEPS_PREFIX"
+
           rm -rf "$PREFIX"
           mkdir -p "$PREFIX"
 
@@ -719,6 +970,7 @@ jobs:
 
           mkdir -p deps && cd deps
 
+          # zstd (static only)
           wget -q https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
           tar -zxf zstd-1.5.7.tar.gz
           cd zstd-1.5.7
@@ -726,6 +978,7 @@ jobs:
           make -C lib PREFIX="$PREFIX" install-static install-pc install-includes
           cd ..
 
+          # zlib
           wget -q https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -zxf zlib-1.3.1.tar.gz
           cd zlib-1.3.1
@@ -734,14 +987,18 @@ jobs:
           make install
           cd ..
 
+          # OpenSSL (static)
           wget -q https://github.com/openssl/openssl/releases/download/openssl-3.5.3/openssl-3.5.3.tar.gz
           tar -zxf openssl-3.5.3.tar.gz
           cd openssl-3.5.3
+          # NOTE: Do NOT pass --cross-compile-prefix when CC is already a prefixed cross-compiler,
+          # otherwise OpenSSL Makefile will call $(CROSS_COMPILE)$(CC) -> mips64el-linux-gnuabi64-mips64el-linux-gnuabi64-gcc (not found)
           ./Configure linux64-mips64 no-shared --prefix="$PREFIX"
           make -j"$(nproc)"
           make install_sw
           cd ..
 
+          # sqlite3
           wget -q https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz
           tar -zxf sqlite-autoconf-3500400.tar.gz
           cd sqlite-autoconf-3500400
@@ -750,6 +1007,7 @@ jobs:
           make install
           cd ..
 
+          # nghttp2
           wget -q https://github.com/nghttp2/nghttp2/releases/download/v1.67.1/nghttp2-1.67.1.tar.xz
           tar -xf nghttp2-1.67.1.tar.xz
           cd nghttp2-1.67.1
@@ -759,6 +1017,7 @@ jobs:
           make install
           cd ..
 
+          # libunistring → libidn2 → libpsl
           wget -q https://ftp.gnu.org/gnu/libunistring/libunistring-1.2.tar.xz
           tar -xf libunistring-1.2.tar.xz
           cd libunistring-1.2
@@ -804,6 +1063,7 @@ jobs:
           fi
           cp -a "$PREFIX/lib/pkgconfig/"*.pc "$PREFIX/lib64/pkgconfig/" 2>/dev/null || true
 
+          # curl (static)
           wget -q https://curl.se/download/curl-8.16.0.tar.xz
           tar -xf curl-8.16.0.tar.xz
           cd curl-8.16.0
@@ -832,37 +1092,80 @@ jobs:
           git clone --depth=1 https://github.com/nlohmann/json.git
           cp json/single_include/nlohmann/json.hpp "$PREFIX/include/nlohmann/"
 
+      - name: Save prebuilt deps to repo (git commit/push) (Linux mips64el)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          src="$DEPS_PREFIX"
+          dst="$PWD/${REPO_DEPS_DIR}"
+
+          rm -rf "$dst"
+          mkdir -p "$(dirname "$dst")"
+          cp -R "$src" "$dst"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+
+          git add "$REPO_DEPS_DIR"
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update prebuilt deps (linux-mips64el-static)"
+          for i in 1 2 3; do
+            git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
+          done
+
       - name: Build (Linux mips64el static, cross)
         shell: bash
         run: |
           set -e
           TARGET="${TARGET_TRIPLE}"
           PREFIX="$DEPS_PREFIX"
+
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:$PREFIX/lib64/pkgconfig"
+
           mkdir -p build/obj build/bin
+
           INC_FLAGS="-I$PREFIX/include"
           LIB_FLAGS="-static -L$PREFIX/lib -L$PREFIX/lib64"
+
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             ${TARGET}-g++ -std=c++20 -O3 -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
-              $INC_FLAGS -c "$cpp_file" -o "$obj_file"
+              $INC_FLAGS \
+              -c "$cpp_file" -o "$obj_file"
           done
-          ${TARGET}-g++ build/obj/*.o -o "build/bin/${APP_NAME}-linux-mips64el" \
+
+          ${TARGET}-g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-linux-mips64el \
             -static -static-libgcc -static-libstdc++ \
             $LIB_FLAGS \
             -lcurl -lpsl -lidn2 -lunistring \
             -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lz \
             -lresolv -lpthread -ldl
-          ${TARGET}-strip "build/bin/${APP_NAME}-linux-mips64el" || true
+
+          ${TARGET}-strip build/bin/${{ env.APP_NAME }}-linux-mips64el || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-mips64el
+          name: ${{ env.APP_NAME }}-linux-mips64el-static
           path: build/bin/${{ env.APP_NAME }}-linux-mips64el
 
 ###############################################################################
-# 2. Windows x86_64 交叉编译（MinGW，全静态）- 不依赖 Makefile
+# 2. Windows x86_64 交叉编译（MinGW，全静态）
 ###############################################################################
   build-windows:
     runs-on: ubuntu-latest
@@ -897,6 +1200,16 @@ jobs:
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
 
+          echo "Checking repo deps at: $repo"
+          echo "--- include dir ---"
+          ls -la "$repo/include" 2>/dev/null || true
+          echo "--- lib dir ---"
+          ls -la "$repo/lib" 2>/dev/null || true
+          echo "--- lib64 dir ---"
+          ls -la "$repo/lib64" 2>/dev/null || true
+
+          # 要求该 job 最终链接所需的库都存在，否则宁愿重新编译 deps，避免最后链接才失败。
+          # 注：OpenSSL 可能落在 lib64/，其余库默认在 lib/
           need_in_lib=(
             "libcurl.a"
             "libsqlite3.a"
@@ -946,12 +1259,14 @@ jobs:
         run: |
           set -e
           mkdir -p deps && cd deps
+          # zstd（仅安装静态库，避免把 .so 带进缓存目录，导致后续 git diff / pull --rebase 失败）
           wget -q https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
           tar -zxf zstd-1.5.7.tar.gz
           cd zstd-1.5.7
           make -C lib -j$(nproc) CC=$CC CXX=$CXX libzstd.a
           sudo make -C lib PREFIX=$PREFIX install-static install-pc install-includes
           cd ..
+          # zlib
           wget -q https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -zxf zlib-1.3.1.tar.gz
           cd zlib-1.3.1
@@ -964,6 +1279,7 @@ jobs:
           CC=$CC ./Configure mingw64 no-shared --prefix=$PREFIX
           make -j$(nproc); sudo make install_sw
           cd ..
+          # SQLite3
           wget -q https://www.sqlite.org/2024/sqlite-autoconf-3450200.tar.gz
           tar -zxf sqlite-autoconf-3450200.tar.gz
           cd sqlite-autoconf-3450200
@@ -972,6 +1288,7 @@ jobs:
             --prefix=$PREFIX
           make -j$(nproc); sudo make install
           cd ..
+          # nghttp2
           wget -q https://github.com/nghttp2/nghttp2/releases/download/v1.59.0/nghttp2-1.59.0.tar.xz
           tar -xf nghttp2-1.59.0.tar.xz
           cd nghttp2-1.59.0
@@ -981,6 +1298,7 @@ jobs:
             --prefix=$PREFIX
           make -j$(nproc); sudo make install
           cd ..
+          # curl  ── 关键：OPENSSL_STATIC + pkg-config --static
           wget -q https://curl.se/download/curl-8.7.1.tar.xz
           tar -xf curl-8.7.1.tar.xz
           cd curl-8.7.1
@@ -1007,47 +1325,107 @@ jobs:
           git clone --depth=1 https://github.com/nlohmann/json.git
           sudo cp json/single_include/nlohmann/json.hpp $PREFIX/include/nlohmann/
 
+      - name: Save prebuilt deps to repo (git commit/push) (Windows x86_64 MinGW)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          dst="$PWD/${REPO_DEPS_DIR}"
+
+          # 关键：必须先拉取远端再改工作区，否则 git pull --rebase 会因为“有未提交变更”而直接失败
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+
+          # 关键：先删除旧目录再重建（避免旧文件残留/合并，尤其是误带入的 .so）
+          rm -rf "$dst"
+          mkdir -p "$dst/include" "$dst/lib"
+
+          # 只拷贝 include/lib（必要文件），并确保归属正确
+          sudo cp -R "$PREFIX/include/." "$dst/include/" || true
+          sudo cp -R "$PREFIX/lib/." "$dst/lib/" || true
+          # 如果 OpenSSL 装到了 lib64/，也一并保存
+          if [ -d "$PREFIX/lib64" ]; then
+            mkdir -p "$dst/lib64"
+            sudo cp -R "$PREFIX/lib64/." "$dst/lib64/" || true
+          fi
+          # 兜底：确保 repo 缓存里不混入 Linux so
+          find "$dst/lib" -maxdepth 1 -name "*.so*" -delete 2>/dev/null || true
+
+          sudo chown -R "$USER":"$USER" "$dst"
+
+          git add "$REPO_DEPS_DIR"
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update prebuilt deps (win-x64-mingw-static)"
+          for i in 1 2 3; do
+            git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
+          done
+
       - name: Build (Windows x86_64 static, no Makefile)
         shell: bash
         run: |
           set -e
+
+          # toolchain
           CC="${CC:-x86_64-w64-mingw32-gcc}"
           CXX="${CXX:-x86_64-w64-mingw32-g++}"
           STRIP="${STRIP:-x86_64-w64-mingw32-strip}"
+
           PREFIX="${PREFIX:-/usr/x86_64-w64-mingw32/static}"
 
+          # sanity
           test -d "$PREFIX/include" || (echo "Missing deps include: $PREFIX/include" && exit 1)
           test -d "$PREFIX/lib" || (echo "Missing deps lib: $PREFIX/lib" && exit 1)
 
           mkdir -p build/obj build/bin
 
+          # headers: 你的 job 已把 header-only 放进 $PREFIX/include
           INC_FLAGS="-I$PREFIX/include"
+
+          # libs: 静态库都在 $PREFIX/lib
           LIB_FLAGS="-L$PREFIX/lib"
 
+          # compile
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename "${cpp_file%.cpp}").o"
             $CXX -std=c++20 -O3 -Wall -Wextra \
               -DCPPHTTPLIB_OPENSSL_SUPPORT \
               -DCURL_STATICLIB -DOPENSSL_STATIC -DNGHTTP2_STATICLIB \
               -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A000000 \
-              $INC_FLAGS -c "$cpp_file" -o "$obj_file"
+              $INC_FLAGS \
+              -c "$cpp_file" -o "$obj_file"
           done
 
-          $CXX build/obj/*.o -o "build/bin/${APP_NAME}-windows-x64.exe" \
+          # link (static)
+          $CXX build/obj/*.o -o build/bin/${{ env.APP_NAME }}-windows-x64.exe \
             -static -static-libgcc -static-libstdc++ \
             $LIB_FLAGS \
             -lcurl -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lz \
             -lws2_32 -lwinmm -lcrypt32 -lbcrypt -lsecur32 -lwldap32 -liphlpapi -lnormaliz
 
-          $STRIP "build/bin/${APP_NAME}-windows-x64.exe" || true
+          $STRIP build/bin/${{ env.APP_NAME }}-windows-x64.exe || true
+
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-windows-x64
+          name: ${{ env.APP_NAME }}-windows-static
           path: build/bin/${{ env.APP_NAME }}-windows-x64.exe
 
 ###############################################################################
-# 2b. Windows ARM64（llvm-mingw，静态）
+# 2b. Windows ARM64 交叉编译（llvm-mingw，静态依赖 + 静态链接）
+#     - 增加“仓库二进制依赖缓存”：third_party/prebuilt/static/win-arm64-llvm
 ###############################################################################
   build-windows-arm64:
     runs-on: windows-latest
@@ -1079,10 +1457,12 @@ jobs:
             && [ -f "$repo/lib/libssl.a" ] && [ -f "$repo/lib/libcrypto.a" ] \
             && [ -f "$repo/lib/libcurl.a" ] && [ -f "$repo/lib/libsqlite3.a" ] \
             && [ -f "$repo/lib/libz.a" ]; then
+            echo "Using cached deps from repo: $repo"
             echo "DEPS_PREFIX=$repo" >> $GITHUB_ENV
             echo "use_cache=true" >> $GITHUB_OUTPUT
           else
             build="$PWD/${BUILD_DEPS_DIR}"
+            echo "No cached deps found; will build deps into: $build"
             echo "DEPS_PREFIX=$build" >> $GITHUB_ENV
             echo "use_cache=false" >> $GITHUB_OUTPUT
           fi
@@ -1120,7 +1500,11 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $zip
           Expand-Archive -Path $zip -DestinationPath "llvm-mingw" -Force
           $root = Join-Path $env:GITHUB_WORKSPACE "llvm-mingw\llvm-mingw-$ver-ucrt-x86_64"
-          if (-not (Test-Path $root)) { exit 1 }
+          if (-not (Test-Path $root)) {
+            Write-Host "ERROR: llvm-mingw root not found at $root"
+            Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE "llvm-mingw") -Force | Format-Table -AutoSize
+            exit 1
+          }
           "LLVM_MINGW_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Build deps from source (zlib + sqlite3 + OpenSSL + curl) (Windows ARM64)
@@ -1128,7 +1512,10 @@ jobs:
         shell: bash
         run: |
           set -e
+
           export PATH="/c/msys64/usr/bin:$PATH"
+          /c/msys64/usr/bin/perl -e "use Locale::Maketext::Simple; print qq(Perl OK\n);" >/dev/null
+
           export PATH="${LLVM_MINGW_ROOT}/bin:$PATH"
           export CC=aarch64-w64-mingw32-gcc
           export CXX=aarch64-w64-mingw32-g++
@@ -1144,6 +1531,7 @@ jobs:
 
           JOBS="$(nproc 2>/dev/null || echo ${NUMBER_OF_PROCESSORS:-2})"
 
+          # zlib (static)
           ZVER=1.3.1
           cd third_party/src
           curl -L -o zlib.tar.gz "https://zlib.net/fossils/zlib-$ZVER.tar.gz"
@@ -1155,6 +1543,7 @@ jobs:
           cp -v libz.a "$PREFIX/lib/"
           cd ..
 
+          # sqlite3 (static, amalgamation)
           SQLITE_VER=3450200
           curl -L -o sqlite.zip "https://www.sqlite.org/2024/sqlite-amalgamation-$SQLITE_VER.zip"
           unzip -q sqlite.zip
@@ -1165,25 +1554,32 @@ jobs:
           cp -v libsqlite3.a "$PREFIX/lib/"
           cd ..
 
+          # OpenSSL (static libs only; avoid apps/providers .res machine mismatch)
           OPENSSL_VER=3.2.1
           curl -L -o openssl.tar.gz "https://www.openssl.org/source/openssl-$OPENSSL_VER.tar.gz"
           tar -xzf openssl.tar.gz
           cd "openssl-$OPENSSL_VER"
+
           /c/msys64/usr/bin/perl Configure mingw64 no-asm no-shared no-apps no-tests no-legacy no-dso \
             --prefix="$PREFIX" --openssldir="$PREFIX/ssl" \
             --cross-compile-prefix=aarch64-w64-mingw32-
+
           make -j"$JOBS" build_libs
+
           mkdir -p "$PREFIX/include" "$PREFIX/lib"
           cp -v libcrypto.a libssl.a "$PREFIX/lib/"
           cp -R include/openssl "$PREFIX/include/"
+          test -f "$PREFIX/include/openssl/ssl.h"
           cd ..
 
+          # curl (static lib only) - CMake avoids autotools deps on Windows runners
           CURL_VER=8.6.0
           curl -L -o curl.tar.gz "https://curl.se/download/curl-$CURL_VER.tar.gz"
           tar -xzf curl.tar.gz
           cd "curl-$CURL_VER"
           mkdir -p build-arm64
           cd build-arm64
+
           cmake .. -G "Unix Makefiles" \
             -DCMAKE_SYSTEM_NAME=Windows \
             -DCMAKE_C_COMPILER=aarch64-w64-mingw32-gcc \
@@ -1200,19 +1596,70 @@ jobs:
             -DCURL_USE_LIBIDN2=OFF \
             -DCURL_USE_LIBSSH2=OFF \
             -DCURL_USE_GSSAPI=OFF
+
           make -j"$JOBS"
           make install
+
+          cd ..
+          cd ..
+
           cd ../..
+          echo "Deps installed under: $PREFIX"
+          ls -la "$PREFIX/include" || true
+          ls -la "$PREFIX/lib" || true
+
+      - name: Save prebuilt deps to repo (git commit/push) (Windows ARM64)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          src="$DEPS_PREFIX"
+          dst="$PWD/${REPO_DEPS_DIR}"
+
+          rm -rf "$dst"
+          mkdir -p "$(dirname "$dst")"
+          cp -R "$src" "$dst"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+
+          git add "$REPO_DEPS_DIR"
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update prebuilt deps (win-arm64-llvm-static)"
+          for i in 1 2 3; do
+            git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
+          done
 
       - name: Build (Windows ARM64 static)
         shell: bash
         run: |
           set -e
           export PATH="${LLVM_MINGW_ROOT}/bin:$PATH"
+
           PREFIX="$DEPS_PREFIX"
+          test -f third_party/include/httplib.h || (echo "Missing third_party/include/httplib.h" && exit 1)
+          test -d "$PREFIX/include" || (echo "Missing deps include dir: $PREFIX/include" && exit 1)
+          test -d "$PREFIX/lib" || (echo "Missing deps lib dir: $PREFIX/lib" && exit 1)
+
           mkdir -p build/obj build/bin
+
           INC_FLAGS="-Ithird_party/include -I$PREFIX/include"
           LIB_FLAGS="-L$PREFIX/lib"
+
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             aarch64-w64-mingw32-g++ -std=c++20 -O3 -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT -DCURL_STATICLIB \
@@ -1220,20 +1667,22 @@ jobs:
               -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A000000 \
               $INC_FLAGS -c "$cpp_file" -o "$obj_file"
           done
-          aarch64-w64-mingw32-g++ build/obj/*.o -o "build/bin/${APP_NAME}-windows-arm64.exe" \
+
+          aarch64-w64-mingw32-g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-windows-arm64.exe \
             -static -static-libgcc -static-libstdc++ \
             $LIB_FLAGS \
             -lws2_32 -lwinmm -lcrypt32 -lbcrypt -lsecur32 -lwldap32 -liphlpapi -lnormaliz \
             -lcurl -lssl -lcrypto -lsqlite3 -lz
-          aarch64-w64-mingw32-strip "build/bin/${APP_NAME}-windows-arm64.exe" || true
+          aarch64-w64-mingw32-strip build/bin/${{ env.APP_NAME }}-windows-arm64.exe || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-windows-arm64
+          name: ${{ env.APP_NAME }}-windows-arm64-static
           path: build/bin/${{ env.APP_NAME }}-windows-arm64.exe
 
 ###############################################################################
-# 2c. macOS x64 (Intel) mostly-static
+# 2c. macOS x64 (Intel) 静态构建（尽量静态：三方库静态；系统 libSystem 仍为动态）
+#     - 依赖缓存目录：third_party/prebuilt/static/macos-x64
 ###############################################################################
   build-macos-x64:
     runs-on: macos-15-intel
@@ -1265,16 +1714,21 @@ jobs:
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
           if [ -d "$repo/include" ] && [ -d "$repo/lib" ] && [ -f "$repo/lib/libcurl.a" ]; then
+            # 兼容旧缓存：如果 libcurl.a 带 IDN2/RTMP 符号，但缓存里没有对应库，会导致最终链接失败
             if nm -g "$repo/lib/libcurl.a" 2>/dev/null | grep -E "_idn2_|_RTMP_" >/dev/null; then
+              echo "Repo cached libcurl.a requires libidn2/librtmp, treat cache as MISS -> rebuild deps"
               build="$PWD/${BUILD_DEPS_DIR}"
               echo "PREFIX=$build" >> $GITHUB_ENV
               echo "use_cache=false" >> $GITHUB_OUTPUT
               exit 0
             fi
+
+            echo "Using cached deps from repo: $repo"
             echo "PREFIX=$repo" >> $GITHUB_ENV
             echo "use_cache=true" >> $GITHUB_OUTPUT
           else
             build="$PWD/${BUILD_DEPS_DIR}"
+            echo "No cached deps found; will build deps into: $build"
             echo "PREFIX=$build" >> $GITHUB_ENV
             echo "use_cache=false" >> $GITHUB_OUTPUT
           fi
@@ -1286,21 +1740,26 @@ jobs:
           set -e
           rm -rf "$PREFIX"
           mkdir -p "$PREFIX"
+
           mkdir -p deps && cd deps
+
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
           export CPPFLAGS="-I$PREFIX/include"
           export LDFLAGS="-L$PREFIX/lib"
 
+          # zstd (static only)
           curl -L -o zstd.tar.gz https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
           tar -xzf zstd.tar.gz
           cd zstd-1.5.7
           make -C lib -j"$(sysctl -n hw.ncpu)" libzstd.a
           make -C lib PREFIX="$PREFIX" install-static install-pc install-includes
+          # 兜底：确保 curl configure 能找到 zstd.h
           mkdir -p "$PREFIX/include"
           cp -f lib/zstd.h "$PREFIX/include/" || true
           cd ..
 
+          # zlib
           curl -L -o zlib.tar.gz https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -xzf zlib.tar.gz
           cd zlib-1.3.1
@@ -1309,6 +1768,7 @@ jobs:
           make install
           cd ..
 
+          # OpenSSL (static)
           curl -L -o openssl.tar.gz https://github.com/openssl/openssl/releases/download/openssl-3.5.3/openssl-3.5.3.tar.gz
           tar -xzf openssl.tar.gz
           cd openssl-3.5.3
@@ -1317,6 +1777,7 @@ jobs:
           make install_sw
           cd ..
 
+          # sqlite3
           curl -L -o sqlite.tar.gz https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz
           tar -xzf sqlite.tar.gz
           cd sqlite-autoconf-3500400
@@ -1325,6 +1786,7 @@ jobs:
           make install
           cd ..
 
+          # nghttp2
           curl -L -o nghttp2.tar.xz https://github.com/nghttp2/nghttp2/releases/download/v1.67.1/nghttp2-1.67.1.tar.xz
           tar -xf nghttp2.tar.xz
           cd nghttp2-1.67.1
@@ -1334,6 +1796,7 @@ jobs:
           make install
           cd ..
 
+          # curl (static) - disable extras to avoid pulling libidn2/librtmp/etc on macOS
           curl -L -o curl.tar.xz https://curl.se/download/curl-8.16.0.tar.xz
           tar -xf curl.tar.xz
           cd curl-8.16.0
@@ -1352,6 +1815,42 @@ jobs:
           make install
           cd ..
 
+      - name: Save prebuilt deps to repo (git commit/push) (macOS x64)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          src="$PREFIX"
+          dst="$PWD/${REPO_DEPS_DIR}"
+
+          rm -rf "$dst"
+          mkdir -p "$(dirname "$dst")"
+          cp -R "$src" "$dst"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+
+          git add "$REPO_DEPS_DIR"
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update prebuilt deps (macos-x64-static)"
+          for i in 1 2 3; do
+            git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
+          done
+
       - name: Fetch header-only deps (macOS x64)
         shell: bash
         run: |
@@ -1368,14 +1867,19 @@ jobs:
         run: |
           set -e
           mkdir -p build/obj build/bin
+
           INC_FLAGS="-I$PREFIX/include"
           LIB_FLAGS="-L$PREFIX/lib"
+
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             clang++ -std=c++20 -O3 -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
               $INC_FLAGS -c "$cpp_file" -o "$obj_file"
           done
-          clang++ build/obj/*.o -o "build/bin/${APP_NAME}-macos-x64" \
+
+          # Note: macOS cannot be fully static (libSystem is always dynamic).
+          # libcurl on macOS needs these frameworks for proxy/system config APIs.
+          clang++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-macos-x64 \
             $LIB_FLAGS \
             -Wl,-dead_strip \
             -lcurl -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lz \
@@ -1385,15 +1889,16 @@ jobs:
         shell: bash
         run: |
           set -e
-          /usr/bin/zip -j "build/${APP_NAME}-macos-x64.zip" "build/bin/${APP_NAME}-macos-x64"
+          /usr/bin/zip -j build/${{ env.APP_NAME }}-macos-x64.zip build/bin/${{ env.APP_NAME }}-macos-x64
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-macos-x64
+          name: ${{ env.APP_NAME }}-macos-x64-static
           path: build/${{ env.APP_NAME }}-macos-x64.zip
 
 ###############################################################################
-# 2d. macOS ARM64 mostly-static
+# 2d. macOS ARM64 静态构建（尽量静态：三方库静态；系统 libSystem 仍为动态）
+#     - 依赖缓存目录：third_party/prebuilt/static/macos-arm64
 ###############################################################################
   build-macos-arm64:
     runs-on: macos-15
@@ -1425,16 +1930,21 @@ jobs:
           set -e
           repo="$PWD/${REPO_DEPS_DIR}"
           if [ -d "$repo/include" ] && [ -d "$repo/lib" ] && [ -f "$repo/lib/libcurl.a" ]; then
+            # 兼容旧缓存：如果 libcurl.a 带 IDN2/RTMP 符号，但缓存里没有对应库，会导致最终链接失败
             if nm -g "$repo/lib/libcurl.a" 2>/dev/null | grep -E "_idn2_|_RTMP_" >/dev/null; then
+              echo "Repo cached libcurl.a requires libidn2/librtmp, treat cache as MISS -> rebuild deps"
               build="$PWD/${BUILD_DEPS_DIR}"
               echo "PREFIX=$build" >> $GITHUB_ENV
               echo "use_cache=false" >> $GITHUB_OUTPUT
               exit 0
             fi
+
+            echo "Using cached deps from repo: $repo"
             echo "PREFIX=$repo" >> $GITHUB_ENV
             echo "use_cache=true" >> $GITHUB_OUTPUT
           else
             build="$PWD/${BUILD_DEPS_DIR}"
+            echo "No cached deps found; will build deps into: $build"
             echo "PREFIX=$build" >> $GITHUB_ENV
             echo "use_cache=false" >> $GITHUB_OUTPUT
           fi
@@ -1446,21 +1956,26 @@ jobs:
           set -e
           rm -rf "$PREFIX"
           mkdir -p "$PREFIX"
+
           mkdir -p deps && cd deps
+
           export PKG_CONFIG="pkg-config --static"
           export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
           export CPPFLAGS="-I$PREFIX/include"
           export LDFLAGS="-L$PREFIX/lib"
 
+          # zstd (static only)
           curl -L -o zstd.tar.gz https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz
           tar -xzf zstd.tar.gz
           cd zstd-1.5.7
           make -C lib -j"$(sysctl -n hw.ncpu)" libzstd.a
           make -C lib PREFIX="$PREFIX" install-static install-pc install-includes
+          # 兜底：确保 curl configure 能找到 zstd.h
           mkdir -p "$PREFIX/include"
           cp -f lib/zstd.h "$PREFIX/include/" || true
           cd ..
 
+          # zlib
           curl -L -o zlib.tar.gz https://zlib.net/fossils/zlib-1.3.1.tar.gz
           tar -xzf zlib.tar.gz
           cd zlib-1.3.1
@@ -1469,6 +1984,7 @@ jobs:
           make install
           cd ..
 
+          # OpenSSL (static)
           curl -L -o openssl.tar.gz https://github.com/openssl/openssl/releases/download/openssl-3.5.3/openssl-3.5.3.tar.gz
           tar -xzf openssl.tar.gz
           cd openssl-3.5.3
@@ -1477,6 +1993,7 @@ jobs:
           make install_sw
           cd ..
 
+          # sqlite3
           curl -L -o sqlite.tar.gz https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz
           tar -xzf sqlite.tar.gz
           cd sqlite-autoconf-3500400
@@ -1485,6 +2002,7 @@ jobs:
           make install
           cd ..
 
+          # nghttp2
           curl -L -o nghttp2.tar.xz https://github.com/nghttp2/nghttp2/releases/download/v1.67.1/nghttp2-1.67.1.tar.xz
           tar -xf nghttp2.tar.xz
           cd nghttp2-1.67.1
@@ -1494,6 +2012,7 @@ jobs:
           make install
           cd ..
 
+          # curl (static) - disable extras to avoid pulling libidn2/librtmp/etc on macOS
           curl -L -o curl.tar.xz https://curl.se/download/curl-8.16.0.tar.xz
           tar -xf curl.tar.xz
           cd curl-8.16.0
@@ -1512,6 +2031,42 @@ jobs:
           make install
           cd ..
 
+      - name: Save prebuilt deps to repo (git commit/push) (macOS ARM64)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          src="$PREFIX"
+          dst="$PWD/${REPO_DEPS_DIR}"
+
+          rm -rf "$dst"
+          mkdir -p "$(dirname "$dst")"
+          cp -R "$src" "$dst"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout "$GITHUB_REF_NAME"
+          git pull --rebase origin "$GITHUB_REF_NAME"
+
+          git add "$REPO_DEPS_DIR"
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update prebuilt deps (macos-arm64-static)"
+          for i in 1 2 3; do
+            git push origin "HEAD:$GITHUB_REF_NAME" && break
+            echo "git push failed, retry with fetch+rebase... attempt=$i"
+            git fetch origin "$GITHUB_REF_NAME"
+            git rebase "origin/$GITHUB_REF_NAME"
+            if [ "$i" = "3" ]; then
+              echo "git push failed after retries" >&2
+              exit 1
+            fi
+          done
+
       - name: Fetch header-only deps (macOS ARM64)
         shell: bash
         run: |
@@ -1528,14 +2083,18 @@ jobs:
         run: |
           set -e
           mkdir -p build/obj build/bin
+
           INC_FLAGS="-I$PREFIX/include"
           LIB_FLAGS="-L$PREFIX/lib"
+
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             clang++ -std=c++20 -O3 -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
               $INC_FLAGS -c "$cpp_file" -o "$obj_file"
           done
-          clang++ build/obj/*.o -o "build/bin/${APP_NAME}-macos-arm64" \
+
+          # libcurl on macOS needs these frameworks for proxy/system config APIs.
+          clang++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-macos-arm64 \
             $LIB_FLAGS \
             -Wl,-dead_strip \
             -lcurl -lssl -lcrypto -lsqlite3 -lnghttp2 -lzstd -lz \
@@ -1545,61 +2104,53 @@ jobs:
         shell: bash
         run: |
           set -e
-          /usr/bin/zip -j "build/${APP_NAME}-macos-arm64.zip" "build/bin/${APP_NAME}-macos-arm64"
+          /usr/bin/zip -j build/${{ env.APP_NAME }}-macos-arm64.zip build/bin/${{ env.APP_NAME }}-macos-arm64
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-macos-arm64
+          name: ${{ env.APP_NAME }}-macos-arm64-static
           path: build/${{ env.APP_NAME }}-macos-arm64.zip
 
 ###############################################################################
-# 3. GitHub Release（打包产物）
+# 3. GitHub Release（打包六平台产物：Linux x64/arm64、Windows x64/arm64、macOS x64/arm64）
 ###############################################################################
   release:
-    needs:
-      - build-linux
-      - build-linux-arm64
-      - build-linux-riscv64
-      - build-linux-mips64el
-      - build-windows
-      - build-windows-arm64
-      - build-macos-x64
-      - build-macos-arm64
+    needs: [build-linux, build-linux-arm64, build-linux-riscv64, build-linux-mips64el, build-windows, build-windows-arm64, build-macos-x64, build-macos-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-x64
+          name: ${{ env.APP_NAME }}-linux-static
           path: dist/
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-arm64
+          name: ${{ env.APP_NAME }}-linux-arm64-static
           path: dist/
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-riscv64
+          name: ${{ env.APP_NAME }}-linux-riscv64-static
           path: dist/
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-linux-mips64el
+          name: ${{ env.APP_NAME }}-linux-mips64el-static
           path: dist/
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-windows-x64
+          name: ${{ env.APP_NAME }}-windows-static
           path: dist/
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-windows-arm64
+          name: ${{ env.APP_NAME }}-windows-arm64-static
           path: dist/
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-macos-x64
+          name: ${{ env.APP_NAME }}-macos-x64-static
           path: dist/
       - uses: actions/download-artifact@v4
         with:
-          name: ${{ env.APP_NAME }}-macos-arm64
+          name: ${{ env.APP_NAME }}-macos-arm64-static
           path: dist/
 
       - run: ls -Rl dist
