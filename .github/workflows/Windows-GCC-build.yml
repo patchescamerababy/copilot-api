@@ -39,6 +39,7 @@ jobs:
           for cpp_file in src/main/cpp/*.cpp; do
             obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
             g++ -std=c++2a -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
+                -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A000000 \
                 -I/c/msys64/mingw64/include -c "$cpp_file" -o "$obj_file"
           done
           g++ build/obj/*.o -o build/bin/Copilot.exe \
@@ -94,4 +95,3 @@ jobs:
           draft: false
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
-          
