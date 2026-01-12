@@ -23,7 +23,13 @@ extern HeaderManager& getHeaderManager();
 
 using json = nlohmann::json;
 
-// 用于 SSE 流式响应中保存待发送数据的线程安全共享缓冲区
+/**
+ * 用于 SSE 流式响应中保存待发送数据的线程安全共享缓冲区
+ *
+ * 重要：不要把它的裸指针塞到 thread_local / 全局变量里，否则在连接结束/线程退出时
+ * 容易出现 use-after-free，进而触发 `double free or corruption (out)` 这类堆破坏问题。
+ * 这里将通过 `shared_ptr` 捕获来保证生命周期正确。
+ */
 struct SharedBuffer {
     std::queue<std::string> chunks;
     std::mutex mtx;
@@ -31,8 +37,10 @@ struct SharedBuffer {
     bool finished = false;
 };
 
-// 静态 thread_local 变量，用于在不捕获的 lambda 中传递 SharedBuffer 指针
-static thread_local SharedBuffer* tls_sharedBuffer = nullptr;
+struct StreamContext {
+    std::shared_ptr<SharedBuffer> sharedBuffer;
+    std::string accumulated;
+};
 
 // 普通响应的回调函数：将接收到的所有数据累加到 responseString 中
 size_t ResponseCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
@@ -48,23 +56,24 @@ size_t ResponseCallback(void* contents, size_t size, size_t nmemb, std::string* 
 }
 
 // 流式回调函数（供 curl 调用）：
-// 将接收到的数据追加到线程局部的累计缓冲区，遇到换行符时将该行（封装为 SSE 格式）写入 SharedBuffer
-size_t StreamResponseCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+// 将接收到的数据追加到“本次请求独立”的累计缓冲区，遇到换行符时把该行写入 SharedBuffer
+static size_t StreamResponseCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t realsize = size * nmemb;
-    SharedBuffer* sharedBuffer = static_cast<SharedBuffer*>(userp);
-    // 使用线程局部变量存储累计数据
-    static thread_local std::string accumulated;
+    auto* ctx = static_cast<StreamContext*>(userp);
+    if (!ctx || !ctx->sharedBuffer) return 0;
+
     std::string data(static_cast<char*>(contents), realsize);
-    accumulated.append(data);
+    ctx->accumulated.append(data);
+
     size_t pos = 0;
-    // 每遇到一个换行符则认为接收到一行完整数据
-    while ((pos = accumulated.find("\n")) != std::string::npos) {
-        std::string line = accumulated.substr(0, pos + 1); {
-            std::lock_guard<std::mutex> lock(sharedBuffer->mtx);
-            sharedBuffer->chunks.push(line);
+    while ((pos = ctx->accumulated.find("\n")) != std::string::npos) {
+        std::string line = ctx->accumulated.substr(0, pos + 1);
+        {
+            std::lock_guard<std::mutex> lock(ctx->sharedBuffer->mtx);
+            ctx->sharedBuffer->chunks.push(line);
         }
-        sharedBuffer->cv.notify_one();
-        accumulated.erase(0, pos + 1);
+        ctx->sharedBuffer->cv.notify_one();
+        ctx->accumulated.erase(0, pos + 1);
     }
     return realsize;
 }
@@ -151,50 +160,48 @@ void handleStreamResponse(httplib::Response& res, const std::string& token, cons
             return;
         }
 
+        // SSE 响应：必须显式设置 status，否则 cpp-httplib 默认可能保持 -1
+        res.status = 200;
+
         // 设置 SSE 必要的响应头
         res.set_header("Content-Type", "text/event-stream; charset=utf-8");
         res.set_header("Cache-Control", "no-cache");
         res.set_header("Connection", "keep-alive");
 
-        // 创建共享缓冲区（使用 shared_ptr 便于在线程间管理生命周期）
+        // 创建共享缓冲区（使用 shared_ptr 确保 provider 与 curl 线程都安全持有生命周期）
         auto sharedBuffer = std::make_shared<SharedBuffer>();
-        // 将共享缓冲区指针赋值给 thread_local 变量，以供不捕获 lambda 使用
-        tls_sharedBuffer = sharedBuffer.get();
 
-        // 设置 chunked 内容提供者（注意：lambda 不捕获任何变量，通过 thread_local 访问共享缓冲区）
+        // 设置 chunked 内容提供者（捕获 sharedBuffer，避免 thread_local 裸指针导致的 UAF/堆破坏）
         res.set_chunked_content_provider(
             "text/event-stream",
-            [](size_t offset, httplib::DataSink& sink) -> bool {
-                if (tls_sharedBuffer == nullptr) {
-                    // 如果这里返回 false，表示当前 provider 已无法继续提供数据，结束
-                    return false;
-                }
+            [sharedBuffer](size_t offset, httplib::DataSink& sink) -> bool {
+                (void)offset; // 消除 unused parameter 警告
 
                 // 先拿到锁
-                std::unique_lock<std::mutex> lock(tls_sharedBuffer->mtx);
+                std::unique_lock<std::mutex> lock(sharedBuffer->mtx);
                 // 如果没有数据且还没结束，则等待一会儿
-                if (tls_sharedBuffer->chunks.empty() && !tls_sharedBuffer->finished) {
-                    tls_sharedBuffer->cv.wait_for(lock, std::chrono::milliseconds(100));
+                if (sharedBuffer->chunks.empty() && !sharedBuffer->finished) {
+                    sharedBuffer->cv.wait_for(lock, std::chrono::milliseconds(100));
                 }
 
                 // 如果有待发送的数据
-                if (!tls_sharedBuffer->chunks.empty()) {
-                    std::string chunk = tls_sharedBuffer->chunks.front();
-                    tls_sharedBuffer->chunks.pop();
+                if (!sharedBuffer->chunks.empty()) {
+                    std::string chunk = std::move(sharedBuffer->chunks.front());
+                    sharedBuffer->chunks.pop();
                     lock.unlock(); // 写数据前就可以把锁释放
                     sink.write(chunk.c_str(), chunk.size());
                 }
 
                 // 如果已经结束且没有剩余数据，调用 sink.done() 并返回 false 表示不再回调
-                if (tls_sharedBuffer->finished && tls_sharedBuffer->chunks.empty()) {
+                if (sharedBuffer->finished && sharedBuffer->chunks.empty()) {
                     sink.done();
                     return false;
                 }
+
                 // 否则返回 true，让 httplib 继续回调本函数
                 return true;
             },
-            nullptr
-        );
+            nullptr);
 
 
         // 启动一个独立线程执行 curl 请求，实时获取数据并写入 SharedBuffer
@@ -229,8 +236,11 @@ void handleStreamResponse(httplib::Response& res, const std::string& token, cons
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
             curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonBody.c_str());
             curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 102400L);
+            auto ctx = std::make_unique<StreamContext>();
+            ctx->sharedBuffer = sharedBuffer;
+
             curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, StreamResponseCallback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, sharedBuffer.get());
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, ctx.get());
 
             CURLcode result = curl_easy_perform(curl);
             if (result != CURLE_OK) {
