@@ -1394,8 +1394,8 @@ jobs:
           # headers: 你的 job 已把 header-only 放进 $PREFIX/include
           INC_FLAGS="-I$PREFIX/include"
 
-          # libs: 静态库都在 $PREFIX/lib
-          LIB_FLAGS="-L$PREFIX/lib"
+          # libs: 大部分静态库在 $PREFIX/lib，但 OpenSSL 可能安装到 $PREFIX/lib64
+          LIB_FLAGS="-L$PREFIX/lib -L$PREFIX/lib64"
 
           # compile
           for cpp_file in src/main/cpp/*.cpp; do
