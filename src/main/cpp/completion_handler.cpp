@@ -94,8 +94,33 @@ CURL* createConnection(struct curl_slist* headers, const std::string& jsonBody) 
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 60L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+
+    // ---- TLS/CA 证书处理（MinGW/MSYS2 常见会缺省找不到 CA bundle）----
+    // 默认：开启证书校验；如果你确实需要跳过校验，可通过环境变量强制关闭：
+    //   COPILOT_API_INSECURE_SSL=1
+    const char* insecure = std::getenv("COPILOT_API_INSECURE_SSL");
+    if (insecure && std::string(insecure) == "1") {
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    } else {
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+        // 优先从环境变量读取（CI/用户可配置）
+        const char* caBundle = std::getenv("CURL_CA_BUNDLE");
+        if (!caBundle || !*caBundle) {
+            caBundle = std::getenv("SSL_CERT_FILE");
+        }
+        if (caBundle && *caBundle) {
+            curl_easy_setopt(curl, CURLOPT_CAINFO, caBundle);
+        } else {
+#ifdef _WIN32
+            // Windows runner/MSYS2 常见路径兜底（如果路径不存在，curl 会忽略/报错由调用方处理）
+            curl_easy_setopt(curl, CURLOPT_CAINFO, "C:\\\\msys64\\\\mingw64\\\\ssl\\\\cert.pem");
+#endif
+        }
+    }
+
     //curl_easy_setopt(curl, CURLOPT_PROXY, "127.0.0.1");
     //curl_easy_setopt(curl, CURLOPT_PROXYPORT, 5257L);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
@@ -229,8 +254,29 @@ void handleStreamResponse(httplib::Response& res, const std::string& token, cons
             curl_easy_setopt(curl, CURLOPT_POST, 1L);
             curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 60L);
             curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+
+            // ---- TLS/CA 证书处理（MinGW/MSYS2 常见会缺省找不到 CA bundle）----
+            const char* insecure = std::getenv("COPILOT_API_INSECURE_SSL");
+            if (insecure && std::string(insecure) == "1") {
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+            } else {
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+                curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+                const char* caBundle = std::getenv("CURL_CA_BUNDLE");
+                if (!caBundle || !*caBundle) {
+                    caBundle = std::getenv("SSL_CERT_FILE");
+                }
+                if (caBundle && *caBundle) {
+                    curl_easy_setopt(curl, CURLOPT_CAINFO, caBundle);
+                } else {
+#ifdef _WIN32
+                    curl_easy_setopt(curl, CURLOPT_CAINFO, "C:\\\\msys64\\\\mingw64\\\\ssl\\\\cert.pem");
+#endif
+                }
+            }
+
             //curl_easy_setopt(curl, CURLOPT_PROXY, "127.0.0.1");
             //curl_easy_setopt(curl, CURLOPT_PROXYPORT, 5257L);
             curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
