@@ -43,7 +43,7 @@ jobs:
                 -I/c/msys64/mingw64/include -c "$cpp_file" -o "$obj_file"
           done
           g++ build/obj/*.o -o build/bin/Copilot.exe \
-              -L/c/msys64/mingw64/lib -lws2_32 -lz -lcurl -lssl -lcrypto -lsqlite3 -lwsock32 -lwinmm
+              -L/c/msys64/mingw64/lib -lws2_32 -lcrypt32 -lz -lcurl -lssl -lcrypto -lsqlite3 -lwsock32 -lwinmm
 
       - name: Install 7z on Windows
         shell: bash
