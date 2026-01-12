@@ -1,0 +1,686 @@
+name: Build and Release (x64 native + x64 -> ARM64 cross)
+
+on:
+  push:
+    paths:
+      - 'src/main/cpp/**'
+      - '.github/workflows/cpp-dynamic.yml'
+  pull_request:
+    paths:
+      - 'src/main/cpp/**'
+      - '.github/workflows/cpp-dynamic.yml'
+
+env:
+  APP_NAME: copilot-api-dynamic
+
+jobs:
+  # ------------------------------------------------
+  # 1) Windows x64 (native on windows-latest using MSYS2/MinGW)
+  # ------------------------------------------------
+  build_windows_x64:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MSYS2 & MinGW (Windows x64)
+        shell: bash
+        run: |
+          choco install msys2 -y
+          C:/msys64/usr/bin/pacman.exe -Syu --noconfirm
+          C:/msys64/usr/bin/pacman.exe -S --noconfirm mingw-w64-x86_64-gcc mingw-w64-x86_64-make mingw-w64-x86_64-curl mingw-w64-x86_64-openssl mingw-w64-x86_64-sqlite3 mingw-w64-x86_64-zlib
+          # Fetch header-only deps
+          rm -rf cpp-httplib json || true
+          git clone --depth 1 https://github.com/yhirose/cpp-httplib.git
+          cp cpp-httplib/httplib.h /c/msys64/mingw64/include/
+          git clone --depth 1 https://github.com/nlohmann/json.git
+          mkdir -p /c/msys64/mingw64/include/nlohmann
+          cp json/single_include/nlohmann/json.hpp /c/msys64/mingw64/include/nlohmann/json.hpp
+      - name: Create Build Directories (Windows x64)
+        shell: bash
+        run: mkdir -p build/obj build/bin
+
+      - name: Build (Windows x64, MinGW)
+        shell: bash
+        run: |
+          set -e
+          export PATH="/c/msys64/mingw64/bin:$PATH"
+          for cpp_file in src/main/cpp/*.cpp; do
+            obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
+            g++ -std=c++2a -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
+              -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A000000 \
+              -I/c/msys64/mingw64/include -c "$cpp_file" -o "$obj_file"
+          done
+          g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}.exe \
+            -L/c/msys64/mingw64/lib -lws2_32 -lz -lcurl -lssl -lcrypto -lsqlite3 -lwinmm -lcrypt32
+      - name: Package Windows x64
+        shell: bash
+        run: |
+          choco install 7zip -y
+          PKG=build/package_windows_x64
+          mkdir -p "$PKG"
+          cp build/bin/${{ env.APP_NAME }}.exe "$PKG"/
+          cp /c/msys64/mingw64/bin/*.dll "$PKG"/ || true
+          cd "$PKG"
+          7z a ../${{ env.APP_NAME }}-Windows-x64.zip *
+          cd -
+          ls -la build
+      - name: Upload Windows x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Windows-x64
+          path: build/${{ env.APP_NAME }}-Windows-x64.zip
+
+  # ------------------------------------------------
+  # 2) Linux x64 (native on ubuntu-latest)
+  # ------------------------------------------------
+  build_linux_x64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux x64)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zip curl libcurl4-openssl-dev libssl-dev libsqlite3-dev zlib1g-dev nlohmann-json3-dev
+          curl -L https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -o /tmp/httplib.h
+          sudo mv /tmp/httplib.h /usr/local/include/httplib.h
+      - name: Create Build Directories (Linux x64)
+        run: mkdir -p build/obj build/bin
+
+      - name: Build (Linux x64)
+        run: |
+          set -e
+          for cpp_file in src/main/cpp/*.cpp; do
+            obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
+            g++ -std=c++2a -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
+              -I/usr/include -I/usr/local/include -c "$cpp_file" -o "$obj_file"
+          done
+          g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }} \
+             -lcurl -lssl -lcrypto -lsqlite3 -lz -lpthread
+      - name: Package Linux x64
+        run: |
+          zip -j build/${{ env.APP_NAME }}-Linux-x64.zip build/bin/${{ env.APP_NAME }}
+          ls -la build
+      - name: Upload Linux x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Linux-x64
+          path: build/${{ env.APP_NAME }}-Linux-x64.zip
+
+
+  # ------------------------------------------------
+  # 3) Linux ARM64 (cross-compile on x64 using Ubuntu aarch64-linux-gnu toolchain)
+  # ------------------------------------------------
+  build_linux_arm64_cross:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross toolchain + ARM64 deps (Linux ARM64)
+        run: |
+          set -e
+
+          # Ubuntu 24.04 runners use deb822 sources (ubuntu.sources). After adding a foreign arch (arm64),
+          # apt will try to fetch arm64 indices from those URIs (security.ubuntu.com / archive.ubuntu.com),
+          # but arm64 indices live on ports.ubuntu.com. Fix by:
+          # 1) pinning existing Ubuntu sources to amd64 only
+          # 2) adding ubuntu-ports sources for arm64
+          sudo dpkg --add-architecture arm64 || true
+
+          sudo python3 - <<'PY'
+          from pathlib import Path
+          p = Path("/etc/apt/sources.list.d/ubuntu.sources")
+          if p.exists():
+              text = p.read_text()
+              blocks = [b for b in text.strip().split("\n\n") if b.strip()]
+              out_blocks = []
+              for b in blocks:
+                  lines = b.splitlines()
+                  if not any(l.startswith("Architectures:") for l in lines):
+                      new_lines = []
+                      for l in lines:
+                          new_lines.append(l)
+                          if l.startswith("Types:"):
+                              new_lines.append("Architectures: amd64")
+                      lines = new_lines
+                  out_blocks.append("\n".join(lines))
+              p.write_text("\n\n".join(out_blocks) + "\n")
+          PY
+
+          sudo tee /etc/apt/sources.list.d/ubuntu-ports-arm64.list >/dev/null <<'EOF'
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble main universe multiverse restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-updates main universe multiverse restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-security main universe multiverse restricted
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports noble-backports main universe multiverse restricted
+          EOF
+
+          sudo apt-get update
+
+          # Cross compiler
+          sudo apt-get install -y --no-install-recommends \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            zip curl ca-certificates pkg-config
+
+          # Target (ARM64) libraries + headers
+          sudo apt-get install -y --no-install-recommends \
+            libssl-dev:arm64 libcurl4-openssl-dev:arm64 libsqlite3-dev:arm64 zlib1g-dev:arm64
+
+      - name: Fetch header-only deps (Linux ARM64)
+        run: |
+          set -e
+          mkdir -p third_party/include third_party/include/nlohmann
+          curl -L https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -o third_party/include/httplib.h
+          curl -L https://raw.githubusercontent.com/nlohmann/json/develop/single_include/nlohmann/json.hpp -o third_party/include/nlohmann/json.hpp
+
+      - name: Create Build Directories (Linux ARM64 cross)
+        run: mkdir -p build/obj build/bin
+
+      - name: Cross-build (Linux ARM64)
+        run: |
+          set -e
+          CXX=aarch64-linux-gnu-g++
+          command -v "$CXX" >/dev/null 2>&1 || (echo "Missing aarch64-linux-gnu-g++" && exit 127)
+
+          # Includes: headers for deps are in multiarch include dir
+          INC_FLAGS="-Ithird_party/include -I/usr/include -I/usr/include/aarch64-linux-gnu"
+
+          # Libs: multiarch lib dir for :arm64 packages
+          LIB_FLAGS="-L/usr/lib/aarch64-linux-gnu -L/lib/aarch64-linux-gnu"
+
+          echo "INC_FLAGS=$INC_FLAGS"
+          echo "LIB_FLAGS=$LIB_FLAGS"
+
+          for cpp_file in src/main/cpp/*.cpp; do
+            obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
+            "$CXX" -std=c++2a -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
+              $INC_FLAGS \
+              -c "$cpp_file" -o "$obj_file"
+          done
+
+          "$CXX" build/obj/*.o -o build/bin/${{ env.APP_NAME }}-arm64 \
+            $LIB_FLAGS \
+            -lcurl -lssl -lcrypto -lsqlite3 -lz -lpthread
+
+      - name: Package Linux ARM64
+        run: |
+          zip -j build/${{ env.APP_NAME }}-Linux-arm64.zip build/bin/${{ env.APP_NAME }}-arm64
+          ls -la build
+      - name: Upload Linux ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Linux-arm64
+          path: build/${{ env.APP_NAME }}-Linux-arm64.zip
+
+  # ------------------------------------------------
+  # 4) Windows ARM64 (cross-compile on x64 using MinGW (llvm-mingw), deps built from source)
+  # ------------------------------------------------
+  build_windows_arm64_cross:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch header-only deps (Windows ARM64)
+        shell: bash
+        run: |
+          set -e
+          mkdir -p third_party/include third_party/include/nlohmann
+          curl -L https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -o third_party/include/httplib.h
+          curl -L https://raw.githubusercontent.com/nlohmann/json/develop/single_include/nlohmann/json.hpp -o third_party/include/nlohmann/json.hpp
+
+      - name: Use cached deps if present
+        id: deps_cache
+        shell: bash
+        run: |
+          set -e
+          if [ -f third_party/prebuilt/win-arm64/lib/libssl.a ] && \
+             [ -f third_party/prebuilt/win-arm64/lib/libcrypto.a ] && \
+             [ -f third_party/prebuilt/win-arm64/lib/libcurl.a ] && \
+             [ -f third_party/prebuilt/win-arm64/lib/libsqlite3.a ] && \
+             [ -f third_party/prebuilt/win-arm64/lib/libz.a ]; then
+            echo "Using cached deps from third_party/prebuilt/win-arm64"
+            echo "DEPS_PREFIX=$PWD/third_party/prebuilt/win-arm64" >> $GITHUB_ENV
+            echo "use_cache=true" >> $GITHUB_OUTPUT
+          else
+            echo "No cached deps found; will build deps."
+            echo "DEPS_PREFIX=$PWD/third_party/prefix/win-arm64" >> $GITHUB_ENV
+            echo "use_cache=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install MSYS2 perl + build tools (for OpenSSL/curl build)
+        shell: bash
+        run: |
+          set -e
+          choco install msys2 -y
+          C:/msys64/usr/bin/pacman.exe -Syu --noconfirm
+          # perl in Git-Bash is MSWin32 perl (Windows paths) -> OpenSSL Configure will refuse.
+          # Use MSYS2 perl (Unix-like paths) + required module Locale::Maketext::Simple.
+          # curl's ./configure needs basic Unix tools like expr (coreutils).
+          C:/msys64/usr/bin/pacman.exe -S --noconfirm \
+            perl \
+            perl-Locale-Maketext-Simple \
+            coreutils \
+            diffutils \
+            gawk \
+            grep \
+            sed \
+            file \
+            make \
+            autoconf \
+            automake \
+            libtool \
+            pkgconf
+
+      - name: Install llvm-mingw toolchain (aarch64-w64-mingw32)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = "20241217"
+          $zip = "llvm-mingw-$ver-ucrt-x86_64.zip"
+          $url = "https://github.com/mstorsjo/llvm-mingw/releases/download/$ver/$zip"
+          Write-Host "Downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath "llvm-mingw" -Force
+          $root = Join-Path $env:GITHUB_WORKSPACE "llvm-mingw\llvm-mingw-$ver-ucrt-x86_64"
+          if (-not (Test-Path $root)) {
+            Write-Host "ERROR: llvm-mingw root not found at $root"
+            Get-ChildItem (Join-Path $env:GITHUB_WORKSPACE "llvm-mingw") -Force | Format-Table -AutoSize
+            exit 1
+          }
+          "LLVM_MINGW_ROOT=$root" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build deps from source (zlib + sqlite3 + OpenSSL + curl)
+        if: steps.deps_cache.outputs.use_cache != 'true'
+        shell: bash
+        run: |
+          set -e
+
+          # OpenSSL Configure requires a perl that produces Unix-like paths in this bash environment.
+          # Use MSYS2 perl + module Locale::Maketext::Simple.
+          export PATH="/c/msys64/usr/bin:$PATH"
+          /c/msys64/usr/bin/perl -e "use Locale::Maketext::Simple; print qq(Perl OK\n);" >/dev/null
+
+          export PATH="${LLVM_MINGW_ROOT}/bin:$PATH"
+          export CC=aarch64-w64-mingw32-gcc
+          export CXX=aarch64-w64-mingw32-g++
+          export AR=aarch64-w64-mingw32-ar
+          export RANLIB=aarch64-w64-mingw32-ranlib
+          export STRIP=aarch64-w64-mingw32-strip
+
+          PREFIX="$DEPS_PREFIX"
+          # Create fresh deps folder each time we rebuild
+          rm -rf "$PREFIX"
+          mkdir -p "$PREFIX" third_party/src
+          echo "PREFIX=$PREFIX"
+
+          JOBS="$(nproc 2>/dev/null || echo ${NUMBER_OF_PROCESSORS:-2})"
+          echo "Using make -j$JOBS"
+
+          # -----------------
+          # zlib (static)
+          # -----------------
+          ZVER=1.3.1
+          cd third_party/src
+          curl -L -o zlib.tar.gz "https://zlib.net/zlib-$ZVER.tar.gz"
+          tar -xzf zlib.tar.gz
+          cd "zlib-$ZVER"
+          make -f win32/Makefile.gcc PREFIX=aarch64-w64-mingw32- libz.a
+          mkdir -p "$PREFIX/include" "$PREFIX/lib"
+          cp -v zlib.h zconf.h "$PREFIX/include/"
+          cp -v libz.a "$PREFIX/lib/"
+          cd ..
+
+          # -----------------
+          # sqlite3 (static, amalgamation)
+          # -----------------
+          # Pick a stable amalgamation build.
+          SQLITE_VER=3450200
+          curl -L -o sqlite.zip "https://www.sqlite.org/2024/sqlite-amalgamation-$SQLITE_VER.zip"
+          unzip -q sqlite.zip
+          cd "sqlite-amalgamation-$SQLITE_VER"
+          $CC -O2 -DSQLITE_THREADSAFE=1 -c sqlite3.c -o sqlite3.o
+          $AR rcs libsqlite3.a sqlite3.o
+          cp -v sqlite3.h sqlite3ext.h "$PREFIX/include/"
+          cp -v libsqlite3.a "$PREFIX/lib/"
+          cd ..
+
+          # -----------------
+          # OpenSSL (best-effort for MinGW ARM64)
+          # NOTE: OpenSSL's official Windows ARM64 target is primarily for MSVC.
+          # We build without asm to reduce target-specific assumptions.
+          # -----------------
+          OPENSSL_VER=3.2.1
+          curl -L -o openssl.tar.gz "https://www.openssl.org/source/openssl-$OPENSSL_VER.tar.gz"
+          tar -xzf openssl.tar.gz
+          cd "openssl-$OPENSSL_VER"
+
+          # We only need libssl/libcrypto for linking (not apps/tests/providers).
+          # Building apps/providers triggers .res objects that default to x64 and causes:
+          #   machine type x64 conflicts with arm64
+          # So disable apps/tests/legacy/dso and build libs only.
+          export WINDRES=aarch64-w64-mingw32-windres
+          export RC=aarch64-w64-mingw32-windres
+
+          /c/msys64/usr/bin/perl Configure mingw64 no-asm no-shared no-apps no-tests no-legacy no-dso \
+            --prefix="$PREFIX" --openssldir="$PREFIX/ssl" \
+            --cross-compile-prefix=aarch64-w64-mingw32-
+
+          # Build ONLY libraries; avoid install targets (they pull in apps/providers and create x64 .res objects).
+          make -j"$JOBS" build_libs
+
+          # Manual "install" for our workflow: headers + static libs are enough for this project and for curl build.
+          mkdir -p "$PREFIX/include" "$PREFIX/lib"
+          cp -v libcrypto.a libssl.a "$PREFIX/lib/"
+          cp -R include/openssl "$PREFIX/include/"
+          test -f "$PREFIX/include/openssl/ssl.h"
+
+          cd ..
+
+          # -----------------
+          # curl (static; uses OpenSSL + zlib) - build with CMake to avoid autotools 'expr' dependency on Windows runners
+          # -----------------
+          CURL_VER=8.6.0
+          curl -L -o curl.tar.gz "https://curl.se/download/curl-$CURL_VER.tar.gz"
+          tar -xzf curl.tar.gz
+          cd "curl-$CURL_VER"
+
+          mkdir -p build-arm64
+          cd build-arm64
+
+          cmake .. -G "Unix Makefiles" \
+            -DCMAKE_SYSTEM_NAME=Windows \
+            -DCMAKE_C_COMPILER=aarch64-w64-mingw32-gcc \
+            -DCMAKE_CXX_COMPILER=aarch64-w64-mingw32-g++ \
+            -DCMAKE_RC_COMPILER=aarch64-w64-mingw32-windres \
+            -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DBUILD_CURL_EXE=OFF \
+            -DCURL_USE_OPENSSL=ON \
+            -DOPENSSL_ROOT_DIR="$PREFIX" \
+            -DZLIB_ROOT="$PREFIX" \
+            -DCURL_DISABLE_LDAP=ON \
+            -DCURL_DISABLE_LDAPS=ON \
+            -DCURL_USE_LIBIDN2=OFF \
+            -DCURL_USE_LIBSSH2=OFF \
+            -DCURL_USE_GSSAPI=OFF
+
+          make -j"$JOBS"
+          make install
+
+          cd ..
+          cd ..
+
+          cd ../..
+          echo "Deps installed under: $PREFIX"
+          ls -la "$PREFIX/include" || true
+          ls -la "$PREFIX/lib" || true
+
+      - name: Save deps cache to repo (git commit/push)
+        if: steps.deps_cache.outputs.use_cache != 'true' && github.event_name == 'push'
+        shell: bash
+        run: |
+          set -e
+          # Copy freshly built deps into repo folder and push, so next runs can reuse without rebuilding.
+          rm -rf third_party/prebuilt/win-arm64
+          mkdir -p third_party/prebuilt/win-arm64
+          # Save only the built binary outputs (and headers) to keep repo size under control.
+          cp -R "$DEPS_PREFIX/include" third_party/prebuilt/win-arm64/
+          cp -R "$DEPS_PREFIX/lib" third_party/prebuilt/win-arm64/
+          if [ -d "$DEPS_PREFIX/bin" ]; then
+            cp -R "$DEPS_PREFIX/bin" third_party/prebuilt/win-arm64/
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add third_party/prebuilt/win-arm64
+          if git diff --cached --quiet; then
+            echo "No deps changes to commit."
+            exit 0
+          fi
+          git commit -m "chore: update win-arm64 deps cache"
+          git push
+
+      - name: Build (Windows ARM64, MinGW aarch64-w64-mingw32-g++)
+        shell: bash
+        run: |
+          set -e
+          export PATH="${LLVM_MINGW_ROOT}/bin:$PATH"
+
+          PREFIX="$DEPS_PREFIX"
+          test -f third_party/include/httplib.h || (echo "Missing third_party/include/httplib.h" && exit 1)
+          test -d "$PREFIX/include" || (echo "Missing deps include dir: $PREFIX/include" && exit 1)
+          test -d "$PREFIX/lib" || (echo "Missing deps lib dir: $PREFIX/lib" && exit 1)
+
+          mkdir -p build/obj build/bin
+
+          INC_FLAGS="-Ithird_party/include -I$PREFIX/include"
+          LIB_FLAGS="-L$PREFIX/lib"
+
+          for cpp_file in src/main/cpp/*.cpp; do
+            obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
+            aarch64-w64-mingw32-g++ -std=c++2a -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT -DCURL_STATICLIB \
+              -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 -DNTDDI_VERSION=0x0A000000 \
+              $INC_FLAGS -c "$cpp_file" -o "$obj_file"
+          done
+
+          aarch64-w64-mingw32-g++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-arm64.exe \
+            $LIB_FLAGS \
+            -lws2_32 -lwinmm -lcrypt32 -lbcrypt -lsecur32 -lwldap32 -liphlpapi -lnormaliz \
+            -lcurl -lssl -lcrypto -lsqlite3 -lz
+
+      - name: Package Windows ARM64
+        shell: bash
+        run: |
+          set -e
+          choco install 7zip -y
+          PKG=build/package_windows_arm64
+          mkdir -p "$PKG"
+          cp build/bin/${{ env.APP_NAME }}-arm64.exe "$PKG"/
+
+          # Copy toolchain runtime DLLs (best effort)
+          cp "${LLVM_MINGW_ROOT}/bin/"*.dll "$PKG"/ 2>/dev/null || true
+
+          cd "$PKG"
+          7z a ../${{ env.APP_NAME }}-Windows-arm64.zip *
+          cd -
+          ls -la build
+
+      - name: Upload Windows ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Windows-arm64
+          path: build/${{ env.APP_NAME }}-Windows-arm64.zip
+
+  build_macos_x64:
+    runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (macOS x64)
+        shell: bash
+        run: |
+          set -e
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          brew list curl >/dev/null 2>&1 || brew install curl
+          brew list sqlite3 >/dev/null 2>&1 || brew install sqlite3
+          brew list zlib >/dev/null 2>&1 || brew install zlib
+          brew list nlohmann-json >/dev/null 2>&1 || brew install nlohmann-json
+          BREW_PREFIX="$(brew --prefix)"
+          echo "BREW_PREFIX=$BREW_PREFIX" >> "$GITHUB_ENV"
+          mkdir -p third_party/include third_party/include/nlohmann
+          curl -L https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -o third_party/include/httplib.h
+          curl -L https://raw.githubusercontent.com/nlohmann/json/develop/single_include/nlohmann/json.hpp -o third_party/include/nlohmann/json.hpp
+      - name: Create Build Directories (macOS x64)
+        shell: bash
+        run: mkdir -p build/obj build/bin
+
+      - name: Build (macOS x64)
+        shell: bash
+        run: |
+          set -e
+          for cpp_file in src/main/cpp/*.cpp; do
+            obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
+            clang++ -std=c++2a -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
+              -Ithird_party/include -I${{ env.BREW_PREFIX }}/include \
+              -I${{ env.BREW_PREFIX }}/opt/openssl@3/include \
+              -I${{ env.BREW_PREFIX }}/opt/curl/include \
+              -c "$cpp_file" -o "$obj_file"
+          done
+          clang++ build/obj/*.o -o build/bin/${{ env.APP_NAME }} \
+            -L${{ env.BREW_PREFIX }}/opt/openssl@3/lib \
+            -L${{ env.BREW_PREFIX }}/opt/curl/lib \
+            -L${{ env.BREW_PREFIX }}/opt/sqlite/lib \
+            -L${{ env.BREW_PREFIX }}/opt/zlib/lib \
+            -lcurl -lssl -lcrypto -lsqlite3 -lz
+      - name: Package macOS x64
+        shell: bash
+        run: |
+          zip -j build/${{ env.APP_NAME }}-macOS-x64.zip build/bin/${{ env.APP_NAME }}
+          ls -la build
+      - name: Upload macOS x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-macOS-x64
+          path: build/${{ env.APP_NAME }}-macOS-x64.zip
+
+  # ------------------------------------------------
+  # 6) macOS ARM64 (native on macos-15 / Apple Silicon)
+  # ------------------------------------------------
+  build_macos_arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (macOS ARM64)
+        shell: bash
+        run: |
+          set -e
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_INSTALL_CLEANUP=1
+          brew list openssl@3 >/dev/null 2>&1 || brew install openssl@3
+          brew list curl >/dev/null 2>&1 || brew install curl
+          brew list sqlite3 >/dev/null 2>&1 || brew install sqlite3
+          brew list zlib >/dev/null 2>&1 || brew install zlib
+          brew list nlohmann-json >/dev/null 2>&1 || brew install nlohmann-json
+          BREW_PREFIX="$(brew --prefix)"
+          echo "BREW_PREFIX=$BREW_PREFIX" >> "$GITHUB_ENV"
+          mkdir -p third_party/include third_party/include/nlohmann
+          curl -L https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -o third_party/include/httplib.h
+          curl -L https://raw.githubusercontent.com/nlohmann/json/develop/single_include/nlohmann/json.hpp -o third_party/include/nlohmann/json.hpp
+      - name: Create Build Directories (macOS ARM64)
+        shell: bash
+        run: mkdir -p build/obj build/bin
+
+      - name: Build (macOS ARM64)
+        shell: bash
+        run: |
+          set -e
+          for cpp_file in src/main/cpp/*.cpp; do
+            obj_file="build/obj/$(basename ${cpp_file%.cpp}).o"
+            clang++ -std=c++2a -Wall -Wextra -DCPPHTTPLIB_OPENSSL_SUPPORT \
+              -Ithird_party/include -I${{ env.BREW_PREFIX }}/include \
+              -I${{ env.BREW_PREFIX }}/opt/openssl@3/include \
+              -I${{ env.BREW_PREFIX }}/opt/curl/include \
+              -c "$cpp_file" -o "$obj_file"
+          done
+          clang++ build/obj/*.o -o build/bin/${{ env.APP_NAME }}-arm64 \
+            -L${{ env.BREW_PREFIX }}/opt/openssl@3/lib \
+            -L${{ env.BREW_PREFIX }}/opt/curl/lib \
+            -L${{ env.BREW_PREFIX }}/opt/sqlite/lib \
+            -L${{ env.BREW_PREFIX }}/opt/zlib/lib \
+            -lcurl -lssl -lcrypto -lsqlite3 -lz
+      - name: Package macOS ARM64
+        shell: bash
+        run: |
+          zip -j build/${{ env.APP_NAME }}-macOS-arm64.zip build/bin/${{ env.APP_NAME }}-arm64
+          ls -la build
+      - name: Upload macOS ARM64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-macOS-arm64
+          path: build/${{ env.APP_NAME }}-macOS-arm64.zip
+
+  # ------------------------------------------------
+  # Release: gather all artifacts and create a GitHub Release
+  # ------------------------------------------------
+  release:
+    needs:
+      - build_windows_x64
+      - build_linux_x64
+      - build_linux_arm64_cross
+      - build_windows_arm64_cross
+      - build_macos_x64
+      - build_macos_arm64
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Windows x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Windows-x64
+          path: artifacts/Windows-x64
+
+      - name: Download Linux x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Linux-x64
+          path: artifacts/Linux-x64
+
+      - name: Download Linux ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Linux-arm64
+          path: artifacts/Linux-arm64
+
+      - name: Download Windows ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-Windows-arm64
+          path: artifacts/Windows-arm64
+
+      - name: Download macOS x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-macOS-x64
+          path: artifacts/macOS-x64
+
+      - name: Download macOS ARM64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.APP_NAME }}-macOS-arm64
+          path: artifacts/macOS-arm64
+
+      - name: List downloaded artifacts
+        run: |
+          ls -la artifacts/Windows-x64 || true
+          ls -la artifacts/Linux-x64 || true
+          ls -la artifacts/Linux-arm64 || true
+          ls -la artifacts/Windows-arm64 || true
+          ls -la artifacts/macOS-x64 || true
+          ls -la artifacts/macOS-arm64 || true
+      - name: Set release date
+        id: date
+        run: echo "DATE=$(date +'%Y.%m.%d')" >> $GITHUB_ENV
+
+      - name: Create GitHub Release and upload files
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ env.DATE }}
+          name: Release v${{ env.DATE }}
+          files: |
+            artifacts/Windows-x64/${{ env.APP_NAME }}-Windows-x64.zip
+            artifacts/Windows-arm64/${{ env.APP_NAME }}-Windows-arm64.zip
+            artifacts/Linux-x64/${{ env.APP_NAME }}-Linux-x64.zip
+            artifacts/Linux-arm64/${{ env.APP_NAME }}-Linux-arm64.zip
+            artifacts/macOS-x64/${{ env.APP_NAME }}-macOS-x64.zip
+            artifacts/macOS-arm64/${{ env.APP_NAME }}-macOS-arm64.zip
+          draft: false
+          prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
